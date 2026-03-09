@@ -1,0 +1,33 @@
+{
+  "suiteName": "excel-total",
+  "operations": [
+    { "id": "excel.application", "template": "excel.application" },
+    { "id": "excel.application.set-visible", "template": "excel.application.set-visible" },
+    { "id": "excel.workbooks.add", "template": "excel.workbooks.add" },
+    { "id": "excel.workbook.add-worksheet", "template": "excel.workbook.add-worksheet" },
+    { "id": "excel.worksheet.rename", "template": "excel.worksheet.rename" },
+    { "id": "excel.workbook.sheet-by-name", "template": "excel.workbook.sheet-by-name" },
+    { "id": "excel.worksheet.range", "template": "excel.worksheet.range" },
+    { "id": "excel.range.set-value", "template": "excel.range.set-value" },
+    { "id": "excel.range.set-matrix", "template": "excel.range.set-matrix" },
+    { "id": "excel.range.get-value", "template": "excel.range.get-value" },
+    { "id": "excel.range.set-formula", "template": "excel.range.set-formula" },
+    { "id": "excel.application.calculate", "template": "excel.application.calculate" },
+    { "id": "excel.range.set-number-format", "template": "excel.range.set-number-format" },
+    { "id": "excel.range.font-bold", "template": "excel.range.font-bold" },
+    { "id": "excel.range.font-italic", "template": "excel.range.font-italic" },
+    { "id": "excel.range.fill-color", "template": "excel.range.fill-color" },
+    { "id": "excel.range.border-style", "template": "excel.range.border-style" },
+    { "id": "excel.range.merge", "template": "excel.range.merge" },
+    { "id": "excel.range.wrap-text", "template": "excel.range.wrap-text" },
+    { "id": "excel.range.horizontal-alignment", "template": "excel.range.horizontal-alignment" },
+    { "id": "excel.range.column-width", "template": "excel.range.column-width" },
+    { "id": "excel.range.row-height", "template": "excel.range.row-height" },
+    { "id": "excel.range.insert-row", "template": "excel.range.insert-row" },
+    { "id": "excel.range.delete-row", "template": "excel.range.delete-row" },
+    { "id": "excel.range.auto-filter", "template": "excel.range.auto-filter" },
+    { "id": "excel.workbook.save-as", "template": "excel.workbook.save-as" },
+    { "id": "excel.workbook.close", "template": "excel.workbook.close" },
+    { "id": "excel.application.quit", "template": "excel.application.quit" }
+  ]
+}

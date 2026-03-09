@@ -1,0 +1,634 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:,">
+  <title>WebBridge.Utility E2E Runner</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: "Segoe UI", Tahoma, sans-serif;
+      --bg: #0f172a;
+      --panel: #111827;
+      --panel-alt: #1f2937;
+      --text: #e5e7eb;
+      --muted: #9ca3af;
+      --ok: #22c55e;
+      --warn: #f59e0b;
+      --bad: #ef4444;
+      --accent: #38bdf8;
+    }
+
+    body {
+      margin: 0;
+      background: linear-gradient(135deg, #020617 0%, #0f172a 55%, #1e293b 100%);
+      color: var(--text);
+    }
+
+    main {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 24px;
+      display: grid;
+      gap: 18px;
+    }
+
+    .hero,
+    .panel {
+      background: rgba(17, 24, 39, 0.92);
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      border-radius: 18px;
+      box-shadow: 0 18px 60px rgba(2, 6, 23, 0.35);
+      overflow: hidden;
+    }
+
+    .hero {
+      padding: 22px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: end;
+      gap: 18px;
+    }
+
+    .hero h1 {
+      margin: 0 0 8px;
+      font-size: 30px;
+      line-height: 1.1;
+    }
+
+    .hero p {
+      margin: 0;
+      color: var(--muted);
+      max-width: 760px;
+    }
+
+    .status-badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      justify-content: end;
+    }
+
+    .badge {
+      min-width: 130px;
+      padding: 10px 12px;
+      background: rgba(15, 23, 42, 0.9);
+      border-radius: 14px;
+      border: 1px solid rgba(148, 163, 184, 0.18);
+    }
+
+    .badge strong {
+      display: block;
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .badge span {
+      font-size: 16px;
+      font-weight: 700;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1.15fr 0.85fr;
+      gap: 18px;
+    }
+
+    .stack {
+      display: grid;
+      gap: 18px;
+    }
+
+    .panel-header {
+      padding: 14px 16px;
+      background: rgba(15, 23, 42, 0.65);
+      border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+
+    .panel-body {
+      padding: 16px;
+    }
+
+    .checklist {
+      display: grid;
+      gap: 10px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .check {
+      display: flex;
+      gap: 12px;
+      align-items: start;
+      padding: 12px 14px;
+      border-radius: 14px;
+      background: rgba(15, 23, 42, 0.52);
+      border: 1px solid rgba(148, 163, 184, 0.12);
+    }
+
+    .check-state {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      margin-top: 5px;
+      background: var(--muted);
+      box-shadow: 0 0 18px rgba(148, 163, 184, 0.4);
+      flex: 0 0 auto;
+    }
+
+    .check-state.ok { background: var(--ok); box-shadow: 0 0 18px rgba(34, 197, 94, 0.45); }
+    .check-state.warn { background: var(--warn); box-shadow: 0 0 18px rgba(245, 158, 11, 0.45); }
+    .check-state.bad { background: var(--bad); box-shadow: 0 0 18px rgba(239, 68, 68, 0.45); }
+    .check-state.run { background: var(--accent); box-shadow: 0 0 18px rgba(56, 189, 248, 0.45); }
+
+    .check h3 {
+      margin: 0 0 4px;
+      font-size: 15px;
+    }
+
+    .check p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+    }
+
+    .check-meta {
+      display: grid;
+      gap: 8px;
+      width: 100%;
+    }
+
+    .check-tag-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 2px;
+    }
+
+    .check-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      background: rgba(15, 23, 42, 0.75);
+      color: var(--muted);
+    }
+
+    .check-tag.test {
+      color: #7dd3fc;
+      border-color: rgba(56, 189, 248, 0.32);
+      background: rgba(8, 47, 73, 0.52);
+    }
+
+    .check-tag.verify {
+      color: #fde68a;
+      border-color: rgba(245, 158, 11, 0.3);
+      background: rgba(69, 26, 3, 0.52);
+    }
+
+    .check-tag.evidence {
+      color: #86efac;
+      border-color: rgba(34, 197, 94, 0.3);
+      background: rgba(20, 83, 45, 0.42);
+    }
+
+    .check-blocks {
+      display: grid;
+      gap: 8px;
+    }
+
+    .check-block {
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(148, 163, 184, 0.12);
+      background: rgba(15, 23, 42, 0.5);
+    }
+
+    .check-block strong {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .check-block.test {
+      border-color: rgba(56, 189, 248, 0.28);
+      background: rgba(8, 47, 73, 0.36);
+    }
+
+    .check-block.test strong {
+      color: #7dd3fc;
+    }
+
+    .check-block.verify {
+      border-color: rgba(245, 158, 11, 0.24);
+      background: rgba(69, 26, 3, 0.34);
+    }
+
+    .check-block.verify strong {
+      color: #fde68a;
+    }
+
+    .check-block.evidence {
+      border-color: rgba(34, 197, 94, 0.24);
+      background: rgba(20, 83, 45, 0.32);
+    }
+
+    .check-block.evidence strong {
+      color: #86efac;
+    }
+
+    .check-block.evidence.warn {
+      border-color: rgba(245, 158, 11, 0.28);
+      background: rgba(69, 26, 3, 0.34);
+    }
+
+    .check-block.evidence.warn strong {
+      color: #fde68a;
+    }
+
+    .check-block.evidence.bad {
+      border-color: rgba(239, 68, 68, 0.3);
+      background: rgba(69, 10, 10, 0.34);
+    }
+
+    .check-block.evidence.bad strong {
+      color: #fca5a5;
+    }
+
+    .check-block code {
+      font-family: Consolas, "Cascadia Mono", monospace;
+      font-size: 12px;
+      color: #e2e8f0;
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .legend-note {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+      margin-top: 10px;
+    }
+
+    pre {
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 12px;
+      line-height: 1.55;
+      color: #d1d5db;
+      background: rgba(15, 23, 42, 0.68);
+      border: 1px solid rgba(148, 163, 184, 0.1);
+      padding: 16px;
+      border-radius: 14px;
+      min-height: 480px;
+      max-height: 680px;
+      overflow: auto;
+    }
+
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+    }
+
+    .summary-card {
+      padding: 14px;
+      border-radius: 14px;
+      background: rgba(15, 23, 42, 0.56);
+      border: 1px solid rgba(148, 163, 184, 0.12);
+    }
+
+    .summary-card strong {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-bottom: 6px;
+    }
+
+    .summary-card span {
+      font-size: 20px;
+      font-weight: 700;
+    }
+
+    .telemetry-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .telemetry-card {
+      padding: 14px;
+      border-radius: 14px;
+      background: rgba(15, 23, 42, 0.56);
+      border: 1px solid rgba(148, 163, 184, 0.12);
+    }
+
+    .telemetry-card strong {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-bottom: 6px;
+    }
+
+    .telemetry-card span {
+      display: block;
+      font-size: 18px;
+      font-weight: 700;
+    }
+
+    .telemetry-card small {
+      display: block;
+      color: var(--muted);
+      margin-top: 4px;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .session-list,
+    .timeline-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .session-row,
+    .timeline-row {
+      padding: 12px 14px;
+      border-radius: 14px;
+      background: rgba(15, 23, 42, 0.52);
+      border: 1px solid rgba(148, 163, 184, 0.12);
+    }
+
+    .session-row strong,
+    .timeline-row strong {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 13px;
+    }
+
+    .session-row p,
+    .timeline-row p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+    }
+
+    .session-flags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 8px;
+    }
+
+    .flag {
+      display: inline-flex;
+      align-items: center;
+      padding: 4px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+      border: 1px solid rgba(148, 163, 184, 0.14);
+      color: var(--muted);
+      background: rgba(15, 23, 42, 0.75);
+    }
+
+    .flag.on {
+      color: #86efac;
+      border-color: rgba(34, 197, 94, 0.24);
+      background: rgba(20, 83, 45, 0.32);
+    }
+
+    .flag.warn {
+      color: #fde68a;
+      border-color: rgba(245, 158, 11, 0.24);
+      background: rgba(69, 26, 3, 0.34);
+    }
+
+    .flag.bad {
+      color: #fca5a5;
+      border-color: rgba(239, 68, 68, 0.28);
+      background: rgba(69, 10, 10, 0.34);
+    }
+
+    .timeline-row.fault {
+      border-color: rgba(245, 158, 11, 0.24);
+      background: rgba(69, 26, 3, 0.34);
+    }
+
+    .timeline-row.verify {
+      border-color: rgba(34, 197, 94, 0.24);
+      background: rgba(20, 83, 45, 0.32);
+    }
+
+    .timeline-row.error {
+      border-color: rgba(239, 68, 68, 0.28);
+      background: rgba(69, 10, 10, 0.34);
+    }
+
+    .timeline-row.info {
+      border-color: rgba(56, 189, 248, 0.24);
+      background: rgba(8, 47, 73, 0.34);
+    }
+
+    .metric-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .metric-row {
+      padding: 12px 14px;
+      border-radius: 14px;
+      background: rgba(15, 23, 42, 0.52);
+      border: 1px solid rgba(148, 163, 184, 0.12);
+    }
+
+    .metric-row strong {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 13px;
+    }
+
+    .metric-row p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+    }
+
+    @media (max-width: 980px) {
+      .grid,
+      .summary,
+      .telemetry-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .hero {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .status-badges {
+        justify-content: start;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="hero">
+      <div>
+        <h1>WebBridge.Utility Real-World E2E</h1>
+        <p>
+          Эта страница исполняет browser-driven black-box сценарии против уже опубликованного
+          `single-file exe`, пишет отчёты обратно во временный host и не использует C# test runtime.
+        </p>
+      </div>
+      <div class="status-badges">
+        <div class="badge">
+          <strong>Статус</strong>
+          <span id="status-text">Подготовка</span>
+        </div>
+        <div class="badge">
+          <strong>Utility URL</strong>
+          <span id="utility-url">-</span>
+        </div>
+        <div class="badge">
+          <strong>Main</strong>
+          <span id="main-status">-</span>
+        </div>
+        <div class="badge">
+          <strong>Chaos</strong>
+          <span id="chaos-status">-</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">Краткая сводка</div>
+      <div class="panel-body">
+        <div class="summary">
+          <div class="summary-card">
+            <strong>Всего проверок</strong>
+            <span id="summary-total">0</span>
+          </div>
+          <div class="summary-card">
+            <strong>Успешно</strong>
+            <span id="summary-pass">0</span>
+          </div>
+          <div class="summary-card">
+            <strong>Предупреждения</strong>
+            <span id="summary-warn">0</span>
+          </div>
+          <div class="summary-card">
+            <strong>Ошибки</strong>
+            <span id="summary-fail">0</span>
+          </div>
+        </div>
+        <div class="legend">
+          <span class="check-tag test">Тестовый шаг</span>
+          <span class="check-tag verify">Проверка</span>
+          <span class="check-tag evidence">Доказательство</span>
+        </div>
+        <p class="legend-note">
+          В каждом check теперь отдельно показано: что именно runner пытался сделать, по какому правилу
+          это считалось успешным, и какое фактическое доказательство было получено от агента, Excel,
+          KOMPAS или System.
+        </p>
+      </div>
+    </section>
+
+    <div class="grid">
+      <section class="panel">
+        <div class="panel-header">Проверки</div>
+        <div class="panel-body">
+          <ul id="checks" class="checklist"></ul>
+        </div>
+      </section>
+
+      <div class="stack">
+        <section class="panel">
+          <div class="panel-header">UI Telemetry</div>
+          <div class="panel-body">
+            <div class="telemetry-grid">
+              <div class="telemetry-card">
+                <strong>Runtime</strong>
+                <span id="telemetry-runtime">-</span>
+                <small id="telemetry-runtime-note">-</small>
+              </div>
+              <div class="telemetry-card">
+                <strong>Сессии</strong>
+                <span id="telemetry-sessions">-</span>
+                <small id="telemetry-sessions-note">presence / active / probe</small>
+              </div>
+              <div class="telemetry-card">
+                <strong>Chaos</strong>
+                <span id="telemetry-chaos">-</span>
+                <small id="telemetry-chaos-note">faults / workers / actions</small>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">Состояние UI-сессий</div>
+          <div class="panel-body">
+            <div id="session-list" class="session-list"></div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">Хаос и отказ-инъекции</div>
+          <div class="panel-body">
+            <div id="timeline-list" class="timeline-list"></div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">Latency / COM</div>
+          <div class="panel-body">
+            <div id="latency-list" class="metric-list"></div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">Журнал runner</div>
+          <div class="panel-body">
+            <pre id="log"></pre>
+          </div>
+        </section>
+      </div>
+    </div>
+  </main>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
+

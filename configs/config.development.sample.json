@@ -1,0 +1,650 @@
+{
+  "UtilityVersion": "1.0.0",
+  "ConfigVersion": "1.0.0-dev",
+  "ConfigSchemaVersion": 1,
+  "Metadata": {
+    "ProductName": "WebBridge.Utility",
+    "Author": "Гороховицкий Егор Русланович",
+    "Description": "Локальная headless-утилита для связи веб-страницы с Excel, KOMPAS-3D и системными API."
+  },
+  "EnvironmentName": "Development",
+  "ListenUrl": "http://127.0.0.1:38741",
+  "UiUrl": "http://127.0.0.1:5510/",
+  "OpenUi": "Auto",
+  "Shutdown": "WhenIdle",
+  "IdleSeconds": 120,
+  "SessionWaitSeconds": 5,
+  "DebugMode": true,
+  "LogLevel": "Debug",
+  "LogFilePath": "local/logs/utility.log",
+  "CacheDirectory": "local/cache",
+  "DiagnosticsDirectory": "local/diagnostics",
+  "Manifest": {
+    "ConfigSchemaVersion": 1,
+    "ManifestVersion": "1.0.0",
+    "MinUtilityVersion": "1.0.0",
+    "UiVersion": "1.0.0",
+    "Checksum": "embedded-development-manifest",
+    "Profiles": [
+      {
+        "ProfileId": "default",
+        "Checksum": "embedded-development-profile"
+      }
+    ]
+  },
+  "Profiles": [
+    {
+      "ProfileId": "default",
+      "ConfigSchemaVersion": 1,
+      "Description": "Development config with generic system, Excel and KOMPAS commands.",
+      "Checksum": "embedded-development-profile",
+      "Commands": {
+        "system.writeText": {
+          "CommandId": "system.writeText",
+          "Adapter": "system",
+          "Invoke": {
+            "Root": "type:System.IO.File",
+            "Chain": [
+              {
+                "Operation": "call",
+                "Member": "WriteAllText",
+                "Args": [
+                  { "FromArgument": "path", "Converter": "path" },
+                  { "FromArgument": "contents", "Converter": "string" }
+                ]
+              }
+            ]
+          }
+        },
+        "system.readText": {
+          "CommandId": "system.readText",
+          "Adapter": "system",
+          "Invoke": {
+            "Root": "type:System.IO.File",
+            "Chain": [
+              {
+                "Operation": "call",
+                "Member": "ReadAllText",
+                "Args": [
+                  { "FromArgument": "path", "Converter": "path" }
+                ]
+              }
+            ]
+          }
+        },
+        "system.path.combine": {
+          "CommandId": "system.path.combine",
+          "Adapter": "system",
+          "Invoke": {
+            "Root": "type:System.IO.Path",
+            "Chain": [
+              {
+                "Operation": "call",
+                "Member": "Combine",
+                "Args": [
+                  { "FromArgument": "parts", "Converter": "stringArray" }
+                ]
+              }
+            ]
+          }
+        },
+        "system.directory.list": {
+          "CommandId": "system.directory.list",
+          "Adapter": "system",
+          "Invoke": {
+            "Root": "type:System.IO.Directory",
+            "Chain": [
+              {
+                "Operation": "call",
+                "Member": "GetFileSystemEntries",
+                "Args": [
+                  { "FromArgument": "path", "Converter": "path" }
+                ]
+              }
+            ]
+          }
+        },
+        "system.exists": {
+          "CommandId": "system.exists",
+          "Adapter": "system",
+          "Invoke": {
+            "Root": "type:System.IO.File",
+            "Chain": [
+              {
+                "Operation": "call",
+                "Member": "Exists",
+                "Args": [
+                  { "FromArgument": "path", "Converter": "path" }
+                ]
+              }
+            ]
+          }
+        },
+        "system.copy": {
+          "CommandId": "system.copy",
+          "Adapter": "system",
+          "Invoke": {
+            "Root": "type:System.IO.File",
+            "Chain": [
+              {
+                "Operation": "call",
+                "Member": "Copy",
+                "Args": [
+                  { "FromArgument": "source", "Converter": "path" },
+                  { "FromArgument": "destination", "Converter": "path" }
+                ]
+              }
+            ]
+          }
+        },
+        "system.move": {
+          "CommandId": "system.move",
+          "Adapter": "system",
+          "Invoke": {
+            "Root": "type:System.IO.File",
+            "Chain": [
+              {
+                "Operation": "call",
+                "Member": "Move",
+                "Args": [
+                  { "FromArgument": "source", "Converter": "path" },
+                  { "FromArgument": "destination", "Converter": "path" }
+                ]
+              }
+            ]
+          }
+        },
+        "system.delete": {
+          "CommandId": "system.delete",
+          "Adapter": "system",
+          "Invoke": {
+            "Root": "type:System.IO.File",
+            "Chain": [
+              {
+                "Operation": "call",
+                "Member": "Delete",
+                "Args": [
+                  { "FromArgument": "path", "Converter": "path" }
+                ]
+              }
+            ]
+          }
+        },
+        "excel.application": {
+          "CommandId": "excel.application",
+          "Adapter": "excel",
+          "Invoke": {
+            "Root": "application",
+            "Chain": []
+          }
+        },
+        "excel.openWorkbook": {
+          "CommandId": "excel.openWorkbook",
+          "Adapter": "excel",
+          "Invoke": {
+            "Root": "application",
+            "Chain": [
+              { "Operation": "get", "Member": "Workbooks" },
+              {
+                "Operation": "call",
+                "Member": "Open",
+                "Args": [
+                  { "FromArgument": "path", "Converter": "path" }
+                ]
+              }
+            ]
+          }
+        },
+        "excel.listSheets": {
+          "CommandId": "excel.listSheets",
+          "Adapter": "excel",
+          "Invoke": {
+            "Root": "handle",
+            "Chain": [
+              { "Operation": "get", "Member": "Worksheets" }
+            ]
+          }
+        },
+        "excel.readRange": {
+          "CommandId": "excel.readRange",
+          "Adapter": "excel",
+          "Invoke": {
+            "Root": "handle",
+            "Chain": [
+              { "Operation": "get", "Member": "Worksheets" },
+              {
+                "Operation": "index",
+                "Member": "",
+                "Args": [
+                  { "FromArgument": "sheet", "Converter": "string" }
+                ]
+              },
+              {
+                "Operation": "call",
+                "Member": "Range",
+                "Args": [
+                  { "FromArgument": "address", "Converter": "string" }
+                ]
+              },
+              { "Operation": "get", "Member": "Value2" }
+            ]
+          }
+        },
+        "excel.writeRange": {
+          "CommandId": "excel.writeRange",
+          "Adapter": "excel",
+          "Invoke": {
+            "Root": "handle",
+            "Chain": [
+              { "Operation": "get", "Member": "Worksheets" },
+              {
+                "Operation": "index",
+                "Member": "",
+                "Args": [
+                  { "FromArgument": "sheet", "Converter": "string" }
+                ]
+              },
+              {
+                "Operation": "call",
+                "Member": "Range",
+                "Args": [
+                  { "FromArgument": "address", "Converter": "string" }
+                ]
+              },
+              { "Operation": "set", "Member": "Value2", "ValueArgument": "value" }
+            ]
+          }
+        },
+        "excel.save": {
+          "CommandId": "excel.save",
+          "Adapter": "excel",
+          "Invoke": {
+            "Root": "handle",
+            "Chain": [
+              { "Operation": "call", "Member": "Save" }
+            ]
+          }
+        },
+        "excel.saveAs": {
+          "CommandId": "excel.saveAs",
+          "Adapter": "excel",
+          "Invoke": {
+            "Root": "handle",
+            "Chain": [
+              {
+                "Operation": "call",
+                "Member": "SaveAs",
+                "Args": [
+                  { "FromArgument": "path", "Converter": "path" }
+                ]
+              }
+            ]
+          }
+        },
+        "excel.close": {
+          "CommandId": "excel.close",
+          "Adapter": "excel",
+          "Invoke": {
+            "Root": "handle",
+            "Chain": [
+              {
+                "Operation": "call",
+                "Member": "Close",
+                "Args": [
+                  { "Literal": false }
+                ]
+              }
+            ]
+          }
+        },
+        "kompas.application": {
+          "CommandId": "kompas.application",
+          "Adapter": "kompas",
+          "Invoke": {
+            "Root": "application",
+            "Chain": []
+          }
+        },
+        "kompas.documents.list": {
+          "CommandId": "kompas.documents.list",
+          "Adapter": "kompas",
+          "Invoke": {
+            "Root": "application",
+            "Chain": [
+              { "Operation": "get", "Member": "Documents" }
+            ]
+          }
+        },
+        "kompas.activeDocument.info": {
+          "CommandId": "kompas.activeDocument.info",
+          "Adapter": "kompas",
+          "Invoke": {
+            "Root": "application",
+            "Chain": [
+              { "Operation": "get", "Member": "ActiveDocument" }
+            ]
+          }
+        },
+        "kompas.openDocument": {
+          "CommandId": "kompas.openDocument",
+          "Adapter": "kompas",
+          "Invoke": {
+            "Root": "application",
+            "Chain": [
+              {
+                "Operation": "call",
+                "Member": "OpenDocument",
+                "Args": [
+                  { "FromArgument": "path", "Converter": "path" }
+                ]
+              }
+            ]
+          }
+        },
+        "kompas.save": {
+          "CommandId": "kompas.save",
+          "Adapter": "kompas",
+          "Invoke": {
+            "Root": "handle",
+            "Chain": [
+              { "Operation": "call", "Member": "Save" }
+            ]
+          }
+        },
+        "kompas.saveAs": {
+          "CommandId": "kompas.saveAs",
+          "Adapter": "kompas",
+          "Invoke": {
+            "Root": "handle",
+            "Chain": [
+              {
+                "Operation": "call",
+                "Member": "SaveAs",
+                "Args": [
+                  { "FromArgument": "path", "Converter": "path" }
+                ]
+              }
+            ]
+          }
+        },
+        "kompas.converter": {
+          "CommandId": "kompas.converter",
+          "Adapter": "kompas",
+          "Invoke": {
+            "Root": "application",
+            "Chain": [
+              {
+                "Operation": "call",
+                "Member": "Converter",
+                "Args": [
+                  { "FromArgument": "library", "Converter": "path" }
+                ]
+              }
+            ]
+          }
+        },
+        "kompas.converter.getFilter": {
+          "CommandId": "kompas.converter.getFilter",
+          "Adapter": "kompas",
+          "Invoke": {
+            "Root": "handle",
+            "Chain": [
+              {
+                "Operation": "call",
+                "Member": "GetFilter",
+                "StoreAs": "filter",
+                "Args": [
+                  { "FromArgument": "docType", "Converter": "int" },
+                  { "FromArgument": "saveAs", "Converter": "bool" },
+                  { "Literal": 0, "Converter": "int", "ByRef": true, "CaptureAs": "command" }
+                ]
+              }
+            ],
+            "ReturnPath": "stored:command"
+          }
+        },
+        "kompas.converter.convert": {
+          "CommandId": "kompas.converter.convert",
+          "Adapter": "kompas",
+          "Invoke": {
+            "Root": "handle",
+            "Chain": [
+              {
+                "Operation": "call",
+                "Member": "Convert",
+                "Args": [
+                  { "FromArgument": "inputFile", "Converter": "path" },
+                  { "FromArgument": "outputFile", "Converter": "path" },
+                  { "FromArgument": "command", "Converter": "int" },
+                  { "FromArgument": "showParam", "Converter": "bool" }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "ComAdapters": [
+    {
+      "AdapterName": "excel",
+      "DisplayName": "Excel",
+      "DispatcherName": "Excel COM",
+      "DefaultProgIds": [ "Excel.Application" ],
+      "ComErrorCode": "excel_com_error",
+      "InvokeErrorCode": "excel_invoke_failed",
+      "UnavailableErrorCode": "adapter_unavailable",
+      "NotFoundMessageFragment": "not found",
+      "NotFoundErrorCode": "excel_workbook_not_found",
+      "UnavailableMessage": "Excel COM runtime is not available.",
+      "ReuseApplication": true,
+      "ReuseDocumentContext": true,
+      "BusyRetryMaxAttempts": 8,
+      "BusyRetryDelaysMs": [ 25, 50, 100, 150, 250, 400, 600, 800 ],
+      "CompactReportDefault": false,
+      "ApplicationAssignments": [
+        { "Member": "DisplayAlerts", "Value": false }
+      ],
+      "WarmupAssignments": [
+        { "Member": "DisplayAlerts", "Value": false },
+        { "Member": "EnableEvents", "Value": false, "IgnoreErrors": true }
+      ],
+      "RealtimeAssignments": [
+        { "Member": "ScreenUpdating", "Value": false, "IgnoreErrors": true },
+        { "Member": "DisplayAlerts", "Value": false },
+        { "Member": "EnableEvents", "Value": false, "IgnoreErrors": true },
+        { "Member": "Calculation", "Value": -4135, "IgnoreErrors": true }
+      ],
+      "VisibleApplicationAssignments": [
+        { "Member": "Visible", "Value": true },
+        { "Member": "UserControl", "Value": true },
+        { "Member": "WindowState", "Value": -4137 }
+      ],
+      "ResultHints": [
+        {
+          "Name": "application",
+          "MatchCurrentApplicationReference": true,
+          "RequiredAllMembers": [ "Workbooks", "Version" ],
+          "Fields": [
+            { "Name": "connected", "StaticValue": true },
+            { "Name": "progId", "UseRuntimeProgId": true },
+            { "Name": "version", "MemberPaths": [ "Version" ] },
+            { "Name": "visible", "MemberPaths": [ "Visible" ] }
+          ],
+          "CompactFields": [
+            { "Name": "progId", "UseRuntimeProgId": true },
+            { "Name": "visible", "MemberPaths": [ "Visible" ] }
+          ]
+        },
+        {
+          "Name": "range",
+          "RequiredAllMembers": [ "Address" ],
+          "Fields": [
+            { "Name": "address", "MemberPaths": [ "Address" ] },
+            { "Name": "value", "MemberPaths": [ "Value2" ] },
+            { "Name": "formula", "MemberPaths": [ "Formula" ] }
+          ],
+          "CompactFields": [
+            { "Name": "address", "MemberPaths": [ "Address" ] }
+          ]
+        },
+        {
+          "Name": "workbook",
+          "RequiredAllMembers": [ "Name", "Worksheets" ],
+          "Fields": [
+            { "Name": "name", "MemberPaths": [ "Name" ] },
+            { "Name": "path", "MemberPaths": [ "FullName", "Path" ] }
+          ],
+          "CompactFields": [
+            { "Name": "name", "MemberPaths": [ "Name" ] }
+          ]
+        },
+        {
+          "Name": "sheets",
+          "IsCollection": true,
+          "IncludeHandleId": false,
+          "CollectionScalarMember": "Name",
+          "RequiredAllMembers": [ "Name" ]
+        },
+        {
+          "Name": "worksheet",
+          "RequiredAllMembers": [ "Name", "Cells" ],
+          "Fields": [
+            { "Name": "name", "MemberPaths": [ "Name" ] },
+            { "Name": "index", "MemberPaths": [ "Index" ] }
+          ],
+          "CompactFields": [
+            { "Name": "name", "MemberPaths": [ "Name" ] }
+          ]
+        }
+      ]
+    },
+    {
+      "AdapterName": "kompas",
+      "DisplayName": "KOMPAS",
+      "DispatcherName": "KOMPAS COM",
+      "DefaultProgIds": [ "KOMPAS.Application.7", "KOMPAS.Application.5" ],
+      "ComErrorCode": "kompas_com_error",
+      "InvokeErrorCode": "kompas_invoke_failed",
+      "UnavailableErrorCode": "adapter_unavailable",
+      "UnavailableMessage": "KOMPAS COM runtime is not available.",
+      "ReuseApplication": true,
+      "ReuseDocumentContext": true,
+      "BusyRetryMaxAttempts": 8,
+      "BusyRetryDelaysMs": [ 25, 50, 100, 150, 250, 400, 600, 800 ],
+      "CompactReportDefault": false,
+      "RealtimeAssignments": [
+        { "Member": "Visible", "Value": true }
+      ],
+      "VisibleApplicationAssignments": [
+        { "Member": "Visible", "Value": true }
+      ],
+      "ResultHints": [
+        {
+          "Name": "application",
+          "MatchCurrentApplicationReference": true,
+          "RequiredAllMembers": [ "Documents", "Visible" ],
+          "Fields": [
+            { "Name": "connected", "StaticValue": true },
+            { "Name": "progId", "UseRuntimeProgId": true },
+            { "Name": "visible", "MemberPaths": [ "Visible" ] },
+            { "Name": "version", "MemberPaths": [ "Version" ] }
+          ],
+          "CompactFields": [
+            { "Name": "progId", "UseRuntimeProgId": true },
+            { "Name": "visible", "MemberPaths": [ "Visible" ] }
+          ]
+        },
+        {
+          "Name": "view",
+          "RequiredAllMembers": [ "Layers", "Name" ],
+          "Fields": [
+            { "Name": "name", "MemberPaths": [ "Name" ] },
+            { "Name": "scale", "MemberPaths": [ "Scale" ] },
+            { "Name": "angle", "MemberPaths": [ "Angle" ] }
+          ],
+          "CompactFields": [
+            { "Name": "name", "MemberPaths": [ "Name" ] }
+          ]
+        },
+        {
+          "Name": "layer",
+          "RequiredAllMembers": [ "Name", "Visible", "Color" ],
+          "Fields": [
+            { "Name": "name", "MemberPaths": [ "Name" ] },
+            { "Name": "visible", "MemberPaths": [ "Visible" ] },
+            { "Name": "current", "MemberPaths": [ "Current" ] },
+            { "Name": "color", "MemberPaths": [ "Color" ] }
+          ],
+          "CompactFields": [
+            { "Name": "name", "MemberPaths": [ "Name" ] }
+          ]
+        },
+        {
+          "Name": "documents",
+          "IsCollection": true,
+          "RequiredAllMembers": [ "Type" ],
+          "RequiredAnyMembers": [ "PathName", "Name" ],
+          "Fields": [
+            { "Name": "name", "MemberPaths": [ "Name" ] },
+            { "Name": "path", "MemberPaths": [ "PathName" ] },
+            { "Name": "type", "MemberPaths": [ "Type" ] }
+          ]
+        },
+        {
+          "Name": "document",
+          "RequiredAllMembers": [ "Type" ],
+          "RequiredAnyMembers": [ "PathName", "Name" ],
+          "Fields": [
+            { "Name": "name", "MemberPaths": [ "Name" ] },
+            { "Name": "path", "MemberPaths": [ "PathName" ] },
+            { "Name": "type", "MemberPaths": [ "Type" ] }
+          ],
+          "CompactFields": [
+            { "Name": "path", "MemberPaths": [ "PathName", "Name" ] }
+          ]
+        }
+      ]
+    }
+  ],
+  "SystemAdapter": {
+    "RootAliases": [ "system" ],
+    "AllowedRoots": [],
+    "Members": [
+      { "Name": "process", "Target": "process" },
+      { "Name": "command", "Target": "command" },
+      { "Name": "http", "Target": "http" },
+      { "Name": "registry", "Target": "registry" },
+      { "Name": "zip", "Target": "zip" },
+      { "Name": "hash", "Target": "hash" },
+      { "Name": "drive", "Target": "drive" }
+    ],
+    "AllowedTypeNames": [],
+    "DeniedTypeNames": [ "System.Type", "System.Activator", "System.AppDomain" ],
+    "AllowedNamespaces": [],
+    "DeniedNamespaces": [ "System.Reflection", "System.Runtime.InteropServices" ],
+    "DeniedInvocations": [],
+    "AllowedProcessExecutables": [],
+    "DeniedProcessExecutables": [],
+    "AllowedUrlPrefixes": [],
+    "DeniedUrlPrefixes": [],
+    "AllowedRegistryHives": [],
+    "DeniedRegistryHives": []
+  },
+  "Security": {
+    "LoopbackOnly": true,
+    "PairingToken": "replace-this-token",
+    "AllowedOrigins": [
+      "http://127.0.0.1:5510",
+      "http://localhost:5510"
+    ]
+  },
+  "Session": {
+    "HeartbeatIntervalSeconds": 10,
+    "HeartbeatTimeoutSeconds": 30,
+    "PresenceTimeoutSeconds": 60,
+    "SuppressAutoOpenOnPresenceSessions": true,
+    "SweepIntervalSeconds": 2
+  }
+}
+

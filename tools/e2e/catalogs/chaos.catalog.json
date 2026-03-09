@@ -1,0 +1,26 @@
+{
+  "suiteName": "chaos",
+  "workers": 4,
+  "durationSeconds": 480,
+  "seed": 240308,
+  "operations": [
+    { "kind": "utility-info", "weight": 6 },
+    { "kind": "config-version", "weight": 6 },
+    { "kind": "config-load", "weight": 3 },
+    { "kind": "config-reload", "weight": 3 },
+    { "kind": "manifest-status", "weight": 2 },
+    { "kind": "manifest-refresh", "weight": 2 },
+    { "kind": "system-file-churn", "weight": 10 },
+    { "kind": "system-command", "weight": 8 },
+    { "kind": "excel-attach", "weight": 8 },
+    { "kind": "excel-edit", "weight": 8 },
+    { "kind": "kompas-attach", "weight": 6 },
+    { "kind": "kompas-edit", "weight": 6 },
+    { "kind": "session-reconnect", "weight": 8 },
+    { "kind": "second-instance", "weight": 3 },
+    { "kind": "bad-token", "weight": 2 },
+    { "kind": "bad-origin", "weight": 2 },
+    { "kind": "kill-excel", "weight": 1 },
+    { "kind": "kill-kompas", "weight": 1 }
+  ]
+}

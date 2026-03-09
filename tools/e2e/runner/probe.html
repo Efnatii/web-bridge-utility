@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WebBridge.Utility UI Probe</title>
+  <style>
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      font-family: "Segoe UI", Tahoma, sans-serif;
+      background: #0f172a;
+      color: #e5e7eb;
+    }
+
+    .card {
+      padding: 28px 32px;
+      background: #111827;
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      border-radius: 16px;
+      max-width: 560px;
+    }
+
+    h1 {
+      margin: 0 0 10px;
+      font-size: 24px;
+    }
+
+    p {
+      margin: 0;
+      color: #9ca3af;
+      line-height: 1.45;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>UI auto-open probe</h1>
+    <p>Страница зафиксировала факт автозапуска браузера агентом и оставлена пассивной, чтобы не мешать основному runner.</p>
+  </div>
+  <script>
+    (async () => {
+      const probePayload = {
+        ts: new Date().toISOString(),
+        href: location.href,
+        userAgent: navigator.userAgent
+      };
+
+      try {
+        const scenarioResponse = await fetch('/api/scenario');
+        const scenario = await scenarioResponse.json();
+        const storageKey = 'kwb-probe-session-id';
+        const desiredSessionId = sessionStorage.getItem(storageKey) || crypto.randomUUID().replaceAll('-', '');
+        sessionStorage.setItem(storageKey, desiredSessionId);
+
+        const registerPresence = async () => {
+          const response = await fetch(`${scenario.utilityBaseUrl}/session/register`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-KWB-Pairing-Token': scenario.pairingToken
+            },
+            body: JSON.stringify({
+              clientName: 'ui-probe',
+              uiVersion: 'probe-presence',
+              desiredSessionId
+            })
+          });
+
+          let payload = null;
+          try {
+            payload = await response.json();
+          } catch {
+            payload = null;
+          }
+
+          await fetch('/api/probe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ...probePayload,
+              sessionId: desiredSessionId,
+              registerStatus: response.status,
+              registerPayload: payload
+            })
+          });
+        };
+
+        await registerPresence();
+
+        const presenceTimeoutSeconds = Number(scenario?.configTemplate?.Session?.PresenceTimeoutSeconds ?? 60);
+        const refreshMs = Math.max(5000, Math.floor((presenceTimeoutSeconds * 1000) / 2));
+        window.setInterval(() => {
+          registerPresence().catch(() => {});
+        }, refreshMs);
+      } catch {
+        fetch('/api/probe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(probePayload)
+        }).catch(() => {});
+      }
+    })();
+  </script>
+</body>
+</html>
+
