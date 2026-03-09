@@ -88,10 +88,18 @@ public static class UtilityCli
         settings.ConfigPath = !string.IsNullOrWhiteSpace(configPath)
             ? Path.GetFullPath(configPath)
             : settings.ConfigPath;
+        settings.Versions ??= new UtilityVersionsOptions();
         settings.Metadata ??= new UtilityMetadata();
-        settings.ComAdapters ??= new List<ComInvokeDescriptor>();
-        settings.Profiles ??= new List<ProfileDefinition>();
-        settings.SystemAdapter ??= new SystemAdapterSettings();
+        settings.Runtime ??= new UtilityRuntimeOptions();
+        settings.Server ??= new UtilityServerOptions();
+        settings.Ui ??= new UtilityUiOptions();
+        settings.Lifecycle ??= new UtilityLifecycleOptions();
+        settings.Logging ??= new UtilityLoggingOptions();
+        settings.Storage ??= new UtilityStorageOptions();
+        settings.Catalog ??= new UtilityCatalogOptions();
+        settings.Adapters ??= new UtilityAdapterOptions();
+        settings.Security ??= new SecuritySettings();
+        settings.Session ??= new SessionSettings();
         if (settings.SystemAdapter.Members.Count == 0)
         {
             settings.SystemAdapter.Members.AddRange(

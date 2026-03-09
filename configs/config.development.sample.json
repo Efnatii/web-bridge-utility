@@ -1,44 +1,61 @@
 {
-  "UtilityVersion": "1.0.0",
-  "ConfigVersion": "1.0.0-dev",
-  "ConfigSchemaVersion": 1,
+  "Versions": {
+    "UtilityVersion": "1.0.0",
+    "ConfigVersion": "1.0.0-dev",
+    "ConfigSchemaVersion": 2
+  },
   "Metadata": {
     "ProductName": "WebBridge.Utility",
     "Author": "Гороховицкий Егор Русланович",
     "Description": "Локальная headless-утилита для связи веб-страницы с Excel, KOMPAS-3D и системными API."
   },
-  "EnvironmentName": "Development",
-  "ListenUrl": "http://127.0.0.1:38741",
-  "UiUrl": "http://127.0.0.1:5510/",
-  "OpenUi": "Auto",
-  "Shutdown": "WhenIdle",
-  "IdleSeconds": 120,
-  "SessionWaitSeconds": 5,
-  "DebugMode": true,
-  "LogLevel": "Debug",
-  "LogFilePath": "local/logs/utility.log",
-  "CacheDirectory": "local/cache",
-  "DiagnosticsDirectory": "local/diagnostics",
-  "Manifest": {
-    "ConfigSchemaVersion": 1,
-    "ManifestVersion": "1.0.0",
-    "MinUtilityVersion": "1.0.0",
-    "UiVersion": "1.0.0",
-    "Checksum": "embedded-development-manifest",
+  "Runtime": {
+    "EnvironmentName": "Development",
+    "DevMode": true
+  },
+  "Server": {
+    "ListenUrl": "http://127.0.0.1:38741"
+  },
+  "Ui": {
+    "Url": "http://127.0.0.1:5510/",
+    "OpenMode": "Auto",
+    "SessionWaitSeconds": 5
+  },
+  "Lifecycle": {
+    "ShutdownPolicy": "WhenIdle",
+    "IdleSeconds": 120
+  },
+  "Logging": {
+    "Level": "Debug",
+    "DebugMode": true,
+    "FilePath": "local/logs/utility.log"
+  },
+  "Storage": {
+    "ProfileDirectory": "local/profiles",
+    "CacheDirectory": "local/cache",
+    "DiagnosticsDirectory": "local/diagnostics"
+  },
+  "Catalog": {
+    "Manifest": {
+      "ConfigSchemaVersion": 1,
+      "ManifestVersion": "1.0.0",
+      "MinUtilityVersion": "1.0.0",
+      "UiVersion": "1.0.0",
+      "Checksum": "embedded-development-manifest",
+      "Profiles": [
+        {
+          "ProfileId": "default",
+          "Checksum": "embedded-development-profile"
+        }
+      ]
+    },
     "Profiles": [
       {
         "ProfileId": "default",
-        "Checksum": "embedded-development-profile"
-      }
-    ]
-  },
-  "Profiles": [
-    {
-      "ProfileId": "default",
-      "ConfigSchemaVersion": 1,
-      "Description": "Development config with generic system, Excel and KOMPAS commands.",
-      "Checksum": "embedded-development-profile",
-      "Commands": {
+        "ConfigSchemaVersion": 1,
+        "Description": "Development config with generic system, Excel and KOMPAS commands.",
+        "Checksum": "embedded-development-profile",
+        "Commands": {
         "system.writeText": {
           "CommandId": "system.writeText",
           "Adapter": "system",
@@ -422,10 +439,12 @@
             ]
           }
         }
+        }
       }
-    }
-  ],
-  "ComAdapters": [
+    ]
+  },
+  "Adapters": {
+    "Com": [
     {
       "AdapterName": "excel",
       "DisplayName": "Excel",
@@ -450,7 +469,6 @@
         { "Member": "EnableEvents", "Value": false, "IgnoreErrors": true }
       ],
       "RealtimeAssignments": [
-        { "Member": "ScreenUpdating", "Value": false, "IgnoreErrors": true },
         { "Member": "DisplayAlerts", "Value": false },
         { "Member": "EnableEvents", "Value": false, "IgnoreErrors": true },
         { "Member": "Calculation", "Value": -4135, "IgnoreErrors": true }
@@ -606,30 +624,31 @@
         }
       ]
     }
-  ],
-  "SystemAdapter": {
-    "RootAliases": [ "system" ],
-    "AllowedRoots": [],
-    "Members": [
-      { "Name": "process", "Target": "process" },
-      { "Name": "command", "Target": "command" },
-      { "Name": "http", "Target": "http" },
-      { "Name": "registry", "Target": "registry" },
-      { "Name": "zip", "Target": "zip" },
-      { "Name": "hash", "Target": "hash" },
-      { "Name": "drive", "Target": "drive" }
     ],
-    "AllowedTypeNames": [],
-    "DeniedTypeNames": [ "System.Type", "System.Activator", "System.AppDomain" ],
-    "AllowedNamespaces": [],
-    "DeniedNamespaces": [ "System.Reflection", "System.Runtime.InteropServices" ],
-    "DeniedInvocations": [],
-    "AllowedProcessExecutables": [],
-    "DeniedProcessExecutables": [],
-    "AllowedUrlPrefixes": [],
-    "DeniedUrlPrefixes": [],
-    "AllowedRegistryHives": [],
-    "DeniedRegistryHives": []
+    "System": {
+      "RootAliases": [ "system" ],
+      "AllowedRoots": [],
+      "Members": [
+        { "Name": "process", "Target": "process" },
+        { "Name": "command", "Target": "command" },
+        { "Name": "http", "Target": "http" },
+        { "Name": "registry", "Target": "registry" },
+        { "Name": "zip", "Target": "zip" },
+        { "Name": "hash", "Target": "hash" },
+        { "Name": "drive", "Target": "drive" }
+      ],
+      "AllowedTypeNames": [],
+      "DeniedTypeNames": [ "System.Type", "System.Activator", "System.AppDomain" ],
+      "AllowedNamespaces": [],
+      "DeniedNamespaces": [ "System.Reflection", "System.Runtime.InteropServices" ],
+      "DeniedInvocations": [],
+      "AllowedProcessExecutables": [],
+      "DeniedProcessExecutables": [],
+      "AllowedUrlPrefixes": [],
+      "DeniedUrlPrefixes": [],
+      "AllowedRegistryHives": [],
+      "DeniedRegistryHives": []
+    }
   },
   "Security": {
     "LoopbackOnly": true,

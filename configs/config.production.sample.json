@@ -1,23 +1,44 @@
 {
-  "UtilityVersion": "1.0.0",
-  "ConfigVersion": "1.0.0-production-bootstrap",
-  "ConfigSchemaVersion": 1,
+  "Versions": {
+    "UtilityVersion": "1.0.0",
+    "ConfigVersion": "1.0.0-production-bootstrap",
+    "ConfigSchemaVersion": 2
+  },
   "Metadata": {
     "ProductName": "WebBridge.Utility",
     "Author": "Гороховицкий Егор Русланович",
     "Description": "Минимальный production bootstrap-config для связи утилиты с веб-интерфейсом."
   },
-  "EnvironmentName": "Production",
-  "ListenUrl": "http://127.0.0.1:38741",
-  "UiUrl": "https://efnatii.github.io/web-bridge-utility/",
-  "OpenUi": "Auto",
-  "Shutdown": "WhenIdle",
-  "IdleSeconds": 120,
-  "SessionWaitSeconds": 5,
-  "DebugMode": false,
-  "LogLevel": "Information",
-  "LogFilePath": "local/logs/utility.log",
-  "DiagnosticsDirectory": "local/diagnostics",
+  "Runtime": {
+    "EnvironmentName": "Production"
+  },
+  "Server": {
+    "ListenUrl": "http://127.0.0.1:38741"
+  },
+  "Ui": {
+    "Url": "https://efnatii.github.io/web-bridge-utility/",
+    "OpenMode": "Auto",
+    "SessionWaitSeconds": 5
+  },
+  "Lifecycle": {
+    "ShutdownPolicy": "WhenIdle",
+    "IdleSeconds": 120
+  },
+  "Logging": {
+    "Level": "Information",
+    "DebugMode": false,
+    "FilePath": "local/logs/utility.log"
+  },
+  "Storage": {
+    "DiagnosticsDirectory": "local/diagnostics"
+  },
+  "Catalog": {
+    "Profiles": []
+  },
+  "Adapters": {
+    "Com": [],
+    "System": {}
+  },
   "Security": {
     "LoopbackOnly": true,
     "PairingToken": "replace-this-token",

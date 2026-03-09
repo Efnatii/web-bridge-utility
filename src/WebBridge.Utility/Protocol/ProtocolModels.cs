@@ -66,11 +66,10 @@ public sealed record WsEnvelope<TPayload>(
     TPayload? Payload,
     ApiError? Error);
 
+[JsonConverter(typeof(UtilitySettingsJsonConverter))]
 public sealed class UtilitySettings
 {
-    public string UtilityVersion { get; set; } = ProtocolConstants.DefaultUtilityVersion;
-    public string ConfigVersion { get; set; } = "1.0.0";
-    public int ConfigSchemaVersion { get; set; } = 1;
+    public UtilityVersionsOptions Versions { get; set; } = new();
     public UtilityMetadata Metadata { get; set; } = new();
     public UtilityRuntimeOptions Runtime { get; set; } = new();
     public UtilityServerOptions Server { get; set; } = new();
@@ -78,13 +77,19 @@ public sealed class UtilitySettings
     public UtilityLifecycleOptions Lifecycle { get; set; } = new();
     public UtilityLoggingOptions Logging { get; set; } = new();
     public UtilityStorageOptions Storage { get; set; } = new();
-    public UtilityManifestSourceOptions ManifestSource { get; set; } = new();
-    public Manifest? Manifest { get; set; }
-    public List<ProfileDefinition> Profiles { get; set; } = new();
-    public List<ComInvokeDescriptor> ComAdapters { get; set; } = new();
-    public SystemAdapterSettings SystemAdapter { get; set; } = new();
+    public UtilityCatalogOptions Catalog { get; set; } = new();
+    public UtilityAdapterOptions Adapters { get; set; } = new();
     public SecuritySettings Security { get; set; } = new();
     public SessionSettings Session { get; set; } = new();
+
+    [JsonIgnore]
+    public string UtilityVersion { get => Versions.UtilityVersion; set => Versions.UtilityVersion = value; }
+
+    [JsonIgnore]
+    public string ConfigVersion { get => Versions.ConfigVersion; set => Versions.ConfigVersion = value; }
+
+    [JsonIgnore]
+    public int ConfigSchemaVersion { get => Versions.ConfigSchemaVersion; set => Versions.ConfigSchemaVersion = value; }
 
     [JsonIgnore]
     public string EnvironmentName { get => Runtime.EnvironmentName; set => Runtime.EnvironmentName = value; }
@@ -96,7 +101,7 @@ public sealed class UtilitySettings
     public string? UiUrl { get => Ui.Url; set => Ui.Url = value; }
 
     [JsonIgnore]
-    public string? ManifestUrl { get => ManifestSource.Url; set => ManifestSource.Url = value; }
+    public string? ManifestUrl { get => Catalog.Url; set => Catalog.Url = value; }
 
     [JsonIgnore]
     public OpenUiMode OpenUi { get => Ui.OpenMode; set => Ui.OpenMode = value; }
@@ -137,13 +142,25 @@ public sealed class UtilitySettings
     [JsonIgnore]
     public bool NoBrowser { get => Runtime.NoBrowser; set => Runtime.NoBrowser = value; }
 
+    [JsonIgnore]
+    public Manifest? Manifest { get => Catalog.Manifest; set => Catalog.Manifest = value; }
+
+    [JsonIgnore]
+    public List<ProfileDefinition> Profiles { get => Catalog.Profiles; set => Catalog.Profiles = value; }
+
+    [JsonIgnore]
+    public List<ComInvokeDescriptor> ComAdapters { get => Adapters.Com; set => Adapters.Com = value; }
+
+    [JsonIgnore]
+    public SystemAdapterSettings SystemAdapter { get => Adapters.System; set => Adapters.System = value; }
+
     public UtilitySettings Clone()
     {
+        EnsureInitialized();
+
         return new UtilitySettings
         {
-            UtilityVersion = UtilityVersion,
-            ConfigVersion = ConfigVersion,
-            ConfigSchemaVersion = ConfigSchemaVersion,
+            Versions = Versions.Clone(),
             Metadata = Metadata.Clone(),
             Runtime = Runtime.Clone(),
             Server = Server.Clone(),
@@ -151,12 +168,9 @@ public sealed class UtilitySettings
             Lifecycle = Lifecycle.Clone(),
             Logging = Logging.Clone(),
             Storage = Storage.Clone(),
-            ManifestSource = ManifestSource.Clone(),
+            Catalog = Catalog.Clone(),
+            Adapters = Adapters.Clone(),
             ConfigPath = ConfigPath,
-            Manifest = Manifest?.Clone(),
-            Profiles = Profiles.Select(profile => profile.Clone()).ToList(),
-            ComAdapters = ComAdapters.Select(adapter => adapter.Clone()).ToList(),
-            SystemAdapter = SystemAdapter.Clone(),
             Security = Security.Clone(),
             Session = Session.Clone(),
         };
@@ -165,10 +179,10 @@ public sealed class UtilitySettings
     public void ApplyFrom(UtilitySettings source)
     {
         ArgumentNullException.ThrowIfNull(source);
+        EnsureInitialized();
+        source.EnsureInitialized();
 
-        UtilityVersion = source.UtilityVersion;
-        ConfigVersion = source.ConfigVersion;
-        ConfigSchemaVersion = source.ConfigSchemaVersion;
+        Versions = source.Versions.Clone();
         Metadata = source.Metadata.Clone();
         Runtime = source.Runtime.Clone();
         Server = source.Server.Clone();
@@ -176,17 +190,49 @@ public sealed class UtilitySettings
         Lifecycle = source.Lifecycle.Clone();
         Logging = source.Logging.Clone();
         Storage = source.Storage.Clone();
-        ManifestSource = source.ManifestSource.Clone();
+        Catalog = source.Catalog.Clone();
+        Adapters = source.Adapters.Clone();
         ConfigPath = source.ConfigPath;
-        Manifest = source.Manifest?.Clone();
-        Profiles = source.Profiles.Select(profile => profile.Clone()).ToList();
-        ComAdapters = source.ComAdapters.Select(adapter => adapter.Clone()).ToList();
-        SystemAdapter = source.SystemAdapter.Clone();
         Security = source.Security.Clone();
         Session = source.Session.Clone();
     }
+
+    private void EnsureInitialized()
+    {
+        Versions ??= new UtilityVersionsOptions();
+        Metadata ??= new UtilityMetadata();
+        Runtime ??= new UtilityRuntimeOptions();
+        Server ??= new UtilityServerOptions();
+        Ui ??= new UtilityUiOptions();
+        Lifecycle ??= new UtilityLifecycleOptions();
+        Logging ??= new UtilityLoggingOptions();
+        Storage ??= new UtilityStorageOptions();
+        Catalog ??= new UtilityCatalogOptions();
+        Adapters ??= new UtilityAdapterOptions();
+        Security ??= new SecuritySettings();
+        Session ??= new SessionSettings();
+    }
 }
 
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed class UtilityVersionsOptions
+{
+    public string UtilityVersion { get; set; } = ProtocolConstants.DefaultUtilityVersion;
+    public string ConfigVersion { get; set; } = "1.0.0";
+    public int ConfigSchemaVersion { get; set; } = 2;
+
+    public UtilityVersionsOptions Clone()
+    {
+        return new UtilityVersionsOptions
+        {
+            UtilityVersion = UtilityVersion,
+            ConfigVersion = ConfigVersion,
+            ConfigSchemaVersion = ConfigSchemaVersion,
+        };
+    }
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed class UtilityRuntimeOptions
 {
     public string EnvironmentName { get; set; } = "Production";
@@ -204,6 +250,7 @@ public sealed class UtilityRuntimeOptions
     }
 }
 
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed class UtilityServerOptions
 {
     public string ListenUrl { get; set; } = ProtocolConstants.DefaultListenUrl;
@@ -217,6 +264,7 @@ public sealed class UtilityServerOptions
     }
 }
 
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed class UtilityUiOptions
 {
     public string? Url { get; set; }
@@ -234,6 +282,7 @@ public sealed class UtilityUiOptions
     }
 }
 
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed class UtilityLifecycleOptions
 {
     public ShutdownPolicy ShutdownPolicy { get; set; } = ShutdownPolicy.WhenIdle;
@@ -249,6 +298,7 @@ public sealed class UtilityLifecycleOptions
     }
 }
 
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed class UtilityLoggingOptions
 {
     public string Level { get; set; } = "Information";
@@ -266,6 +316,7 @@ public sealed class UtilityLoggingOptions
     }
 }
 
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed class UtilityStorageOptions
 {
     public string? ProfileDirectory { get; set; }
@@ -283,19 +334,41 @@ public sealed class UtilityStorageOptions
     }
 }
 
-public sealed class UtilityManifestSourceOptions
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed class UtilityCatalogOptions
 {
     public string? Url { get; set; }
+    public Manifest? Manifest { get; set; }
+    public List<ProfileDefinition> Profiles { get; set; } = new();
 
-    public UtilityManifestSourceOptions Clone()
+    public UtilityCatalogOptions Clone()
     {
-        return new UtilityManifestSourceOptions
+        return new UtilityCatalogOptions
         {
             Url = Url,
+            Manifest = Manifest?.Clone(),
+            Profiles = Profiles.Select(profile => profile.Clone()).ToList(),
         };
     }
 }
 
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed class UtilityAdapterOptions
+{
+    public List<ComInvokeDescriptor> Com { get; set; } = new();
+    public SystemAdapterSettings System { get; set; } = new();
+
+    public UtilityAdapterOptions Clone()
+    {
+        return new UtilityAdapterOptions
+        {
+            Com = Com.Select(adapter => adapter.Clone()).ToList(),
+            System = System.Clone(),
+        };
+    }
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed class UtilityMetadata
 {
     public string ProductName { get; set; } = "WebBridge.Utility";
@@ -319,6 +392,7 @@ public sealed class UtilityMetadata
     }
 }
 
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed class SecuritySettings
 {
     public bool LoopbackOnly { get; set; } = true;
@@ -336,6 +410,7 @@ public sealed class SecuritySettings
     }
 }
 
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed class SessionSettings
 {
     public int HeartbeatIntervalSeconds { get; set; } = 10;
@@ -357,6 +432,7 @@ public sealed class SessionSettings
     }
 }
 
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed class SystemAdapterSettings
 {
     public List<string> RootAliases { get; set; } = new();
@@ -409,6 +485,7 @@ public sealed class SystemAdapterSettings
     }
 }
 
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed class SystemSurfaceBinding
 {
     public string Name { get; set; } = string.Empty;
@@ -428,6 +505,7 @@ public sealed class SystemSurfaceBinding
     }
 }
 
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed class Manifest
 {
     public int ConfigSchemaVersion { get; set; } = 1;
@@ -453,6 +531,7 @@ public sealed class Manifest
     }
 }
 
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed class ManifestProfileReference
 {
     public string ProfileId { get; set; } = string.Empty;
@@ -474,6 +553,7 @@ public sealed class ManifestProfileReference
     }
 }
 
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed class ProfileDefinition
 {
     public string ProfileId { get; set; } = string.Empty;

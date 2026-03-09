@@ -55,6 +55,22 @@ function sleep(ms) {
   return new Promise(resolve => window.setTimeout(resolve, ms));
 }
 
+function toUtf16LeBase64(value) {
+  const bytes = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    bytes.push(code & 0xff, code >> 8);
+  }
+
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...bytes.slice(index, index + chunkSize));
+  }
+
+  return window.btoa(binary);
+}
+
 function deepClone(value) {
   return value == null ? value : JSON.parse(JSON.stringify(value));
 }
@@ -634,7 +650,10 @@ function normalizeSession(session) {
 }
 
 function configTemplateVersion() {
-  return state.scenario?.configTemplate?.configVersion
+  return state.scenario?.configTemplate?.versions?.configVersion
+    ?? state.scenario?.configTemplate?.Versions?.ConfigVersion
+    ?? state.scenario?.configTemplate?.Versions?.configVersion
+    ?? state.scenario?.configTemplate?.configVersion
     ?? state.scenario?.configTemplate?.ConfigVersion
     ?? null;
 }
@@ -1382,14 +1401,16 @@ async function runManagementSuite(report) {
   }, async () => {
     const effective = await getEffectiveConfig();
     const next = deepClone(effective);
+    next.versions = next.versions ?? {};
+    next.ui = next.ui ?? {};
     next.security.pairingToken = state.scenario.pairingToken;
-    next.configVersion = `e2e-hot-${Date.now()}`;
-    next.uiUrl = state.scenario.hostBaseUrl;
+    next.versions.configVersion = `e2e-hot-${Date.now()}`;
+    next.ui.url = state.scenario.hostBaseUrl;
     const applied = await postConfigLoad(next, false);
     assert(applied.response.ok, `/config/load status ${applied.response.status}`);
     assert(applied.payload.applied === true, "Config was not applied.");
     const version = await getConfigVersion();
-    assert(version.configVersion === next.configVersion, `Expected configVersion ${next.configVersion}, got ${version.configVersion}.`);
+    assert(version.configVersion === next.versions.configVersion, `Expected configVersion ${next.versions.configVersion}, got ${version.configVersion}.`);
     return { actual: `Applied configVersion=${version.configVersion}, restartRequired=${applied.payload.restartRequired}` };
   });
 
@@ -1918,6 +1939,38 @@ async function runExcelSuite(report) {
     return command.result;
   };
 
+  const bringExcelWindowToFront = async (hwnd, titleHint = "") => {
+    const script = [
+      `$hwnd = [intptr]${Number(hwnd)};`,
+      `$titleHint = '${String(titleHint).replace(/'/g, "''")}';`,
+      "Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class Win32 { [DllImport(\"user32.dll\")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow); [DllImport(\"user32.dll\")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow); [DllImport(\"user32.dll\")] public static extern bool BringWindowToTop(IntPtr hWnd); [DllImport(\"user32.dll\")] public static extern bool SetForegroundWindow(IntPtr hWnd); [DllImport(\"user32.dll\")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId); }';",
+      "[uint32]$pid = 0;",
+      "[void][Win32]::GetWindowThreadProcessId($hwnd, [ref]$pid);",
+      "$proc = $null;",
+      "if ($titleHint.Length -gt 0) { $proc = Get-Process EXCEL -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -like ('*' + $titleHint + '*') } | Sort-Object StartTime -Descending | Select-Object -First 1 }",
+      "if (-not $proc) { $proc = Get-Process EXCEL -ErrorAction SilentlyContinue | Sort-Object StartTime -Descending | Select-Object -First 1 }",
+      "if ($pid -eq 0 -and $proc) { $pid = [uint32]$proc.Id }",
+      "if (($hwnd -eq [intptr]::Zero) -and $proc -and $proc.MainWindowHandle -ne 0) { $hwnd = [intptr]$proc.MainWindowHandle }",
+      "[void][Win32]::ShowWindowAsync($hwnd, 9);",
+      "Start-Sleep -Milliseconds 150;",
+      "[void][Win32]::ShowWindow($hwnd, 3);",
+      "[void][Win32]::BringWindowToTop($hwnd);",
+      "try { $ws = New-Object -ComObject WScript.Shell; if ($pid -gt 0) { [void]$ws.AppActivate([int]$pid) } elseif ($titleHint.Length -gt 0) { [void]$ws.AppActivate($titleHint) } } catch {}",
+      "Start-Sleep -Milliseconds 150;",
+      "[void][Win32]::SetForegroundWindow($hwnd);",
+      "Write-Output ('pid=' + $pid + '; hwnd=' + $hwnd.ToInt64() + '; title=' + $titleHint)",
+    ].join(" ");
+    const encoded = toUtf16LeBase64(script);
+    return await executeCommand("system.command.run", {
+      fileName: "powershell.exe",
+      arguments: `-NoProfile -ExecutionPolicy Bypass -EncodedCommand ${encoded}`,
+      workingDirectory: state.scenario.system.root,
+      timeoutMilliseconds: 15000,
+      standardInput: null,
+      environment: null,
+    });
+  };
+
   await runCheck(report, {
     id: "excel-application-attach-create",
     expected: "Excel.Application должен attach/create и вернуть handle",
@@ -1938,7 +1991,9 @@ async function runExcelSuite(report) {
     expected: "Excel окно должно стать видимым",
   }, async () => {
     await excelCommand("excel.application.set-visible", { visible: true });
-    return { actual: "Visible=true" };
+    const actual = await readExcelResult("excel.application.get-visible", {});
+    assertExcelBoolean(actual, true, "Excel.Visible");
+    return { actual: `Visible=${actual}` };
   });
 
   await runCheck(report, {
@@ -1972,12 +2027,45 @@ async function runExcelSuite(report) {
     return { actual: `worksheet=${excel.sheetName}` };
   });
 
+  await runCheck(report, {
+    id: "excel-bring-to-front",
+    expected: "Excel окно должно получать foreground через Win32 и AppActivate",
+  }, async () => {
+    const hwnd = Number(await readExcelResult("excel.application.get-hwnd", {}));
+    assert(Number.isFinite(hwnd) && hwnd > 0, `Unexpected Excel hwnd ${hwnd}`);
+    const workbookName = String(await readExcelResult("excel.workbook.get-name", { handleId: workbookHandle }));
+    const command = await bringExcelWindowToFront(hwnd, workbookName);
+    const exitCode = Number(command.result?.exitCode ?? -1);
+    assert(exitCode === 0, `Foreground helper failed with exitCode=${exitCode}`);
+    const stdout = String(command.result?.stdout ?? "").trim();
+    return { actual: `hwnd=${hwnd}, ${stdout || "foreground-applied"}` };
+  });
+
   const rangeHandle = async address => {
     const command = await excelCommand("excel.worksheet.range", { handleId: worksheetHandle, address });
     const handleId = extractHandleId(command.result ?? command);
     assert(Boolean(handleId), `Range handleId is missing for ${address}.`);
     return handleId;
   };
+
+  await runCheck(report, {
+    id: "excel-visual-smoke",
+    expected: "Видимый Excel должен разрешать ScreenUpdating и давать окно на короткое визуальное наблюдение",
+  }, async () => {
+    await excelCommand("excel.application.set-screen-updating", { value: true });
+    const screenUpdating = await readExcelResult("excel.application.get-screen-updating", {});
+    assertExcelBoolean(screenUpdating, true, "ScreenUpdating");
+    await excelCommand("excel.worksheet.activate", { handleId: worksheetHandle });
+    const handleId = await rangeHandle("A1");
+    const workbookName = String(await readExcelResult("excel.workbook.get-name", { handleId: workbookHandle }));
+    await excelCommand("excel.range.set-value", { handleId, value: "VISUAL SMOKE" });
+    await excelCommand("excel.range.font-bold", { handleId, value: true });
+    await excelCommand("excel.range.font-size", { handleId, value: 24 });
+    await excelCommand("excel.range.fill-color", { handleId, color: 65535 });
+    await bringExcelWindowToFront(Number(await readExcelResult("excel.application.get-hwnd", {})), workbookName);
+    await sleep(excel.visualPauseMs ?? 1200);
+    return { actual: `screenUpdating=${screenUpdating}, pauseMs=${excel.visualPauseMs ?? 1200}` };
+  });
 
   const excelOperations = [
     {
@@ -3752,13 +3840,15 @@ async function chaosAction(kind, workerId) {
     case "config-load": {
       const effective = await getEffectiveConfig();
       const next = deepClone(effective);
-      next.configVersion = `chaos-${workerId}-${Date.now()}`;
+      next.versions = next.versions ?? {};
+      next.ui = next.ui ?? {};
+      next.versions.configVersion = `chaos-${workerId}-${Date.now()}`;
       next.security = next.security ?? {};
       next.security.pairingToken = state.scenario.pairingToken;
-      next.uiUrl = state.scenario.hostBaseUrl;
+      next.ui.url = state.scenario.hostBaseUrl;
       const response = await postConfigLoad(next, false);
       assert(response.response.ok, "config/load failed");
-      return next.configVersion;
+      return next.versions.configVersion;
     }
     case "config-reload":
       await postConfigReload();

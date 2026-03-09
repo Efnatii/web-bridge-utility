@@ -318,6 +318,8 @@ def build_excel_commands() -> dict[str, Any]:
     return {
         "excel.application": command("excel", "application", []),
         "excel.application.set-visible": command("excel", "application", [step("set", "Visible", value_argument="visible")]),
+        "excel.application.get-visible": command("excel", "application", [step("get", "Visible")]),
+        "excel.application.get-hwnd": command("excel", "application", [step("get", "Hwnd")]),
         "excel.application.set-display-alerts": command("excel", "application", [step("set", "DisplayAlerts", value_argument="value")]),
         "excel.application.get-display-alerts": command("excel", "application", [step("get", "DisplayAlerts")]),
         "excel.application.set-screen-updating": command("excel", "application", [step("set", "ScreenUpdating", value_argument="value")]),
@@ -563,25 +565,33 @@ def build_profile_commands() -> dict[str, Any]:
 
 def make_temp_config(temp_root: Path, commands: dict[str, Any], browser_host: str, browser_port: int) -> tuple[Path, dict[str, Any]]:
     config = read_json(CONFIG_TEMPLATE)
-    config["ConfigVersion"] = f"e2e-{utc_now()}"
-    config["EnvironmentName"] = "E2E"
-    config["UiUrl"] = f"http://{browser_host}:{browser_port}/probe.html"
-    config["OpenUi"] = "Auto"
-    config["Shutdown"] = "WhenIdle"
-    config["IdleSeconds"] = 18
-    config["SessionWaitSeconds"] = 4
-    config["DebugMode"] = True
-    config["LogLevel"] = "Debug"
-    config["LogFilePath"] = str((temp_root / "logs" / "utility.log").resolve())
-    config["CacheDirectory"] = str((temp_root / "cache").resolve())
-    config["ProfileDirectory"] = str((temp_root / "profiles").resolve())
-    config["DiagnosticsDirectory"] = str((temp_root / "diagnostics").resolve())
+    config.setdefault("Versions", {})
+    config.setdefault("Runtime", {})
+    config.setdefault("Ui", {})
+    config.setdefault("Lifecycle", {})
+    config.setdefault("Logging", {})
+    config.setdefault("Storage", {})
+    config.setdefault("Catalog", {})
+    config.setdefault("Adapters", {})
+    config["Versions"]["ConfigVersion"] = f"e2e-{utc_now()}"
+    config["Runtime"]["EnvironmentName"] = "E2E"
+    config["Ui"]["Url"] = f"http://{browser_host}:{browser_port}/probe.html"
+    config["Ui"]["OpenMode"] = "Auto"
+    config["Lifecycle"]["ShutdownPolicy"] = "WhenIdle"
+    config["Lifecycle"]["IdleSeconds"] = 18
+    config["Ui"]["SessionWaitSeconds"] = 4
+    config["Logging"]["DebugMode"] = True
+    config["Logging"]["Level"] = "Debug"
+    config["Logging"]["FilePath"] = str((temp_root / "logs" / "utility.log").resolve())
+    config["Storage"]["CacheDirectory"] = str((temp_root / "cache").resolve())
+    config["Storage"]["ProfileDirectory"] = str((temp_root / "profiles").resolve())
+    config["Storage"]["DiagnosticsDirectory"] = str((temp_root / "diagnostics").resolve())
     config["Security"]["PairingToken"] = "kwb-e2e-token"
     config["Security"]["AllowedOrigins"] = [
         f"http://{browser_host}:{browser_port}",
         f"http://localhost:{browser_port}",
     ]
-    config["Profiles"] = [
+    config["Catalog"]["Profiles"] = [
         {
             "ProfileId": "e2e",
             "ConfigSchemaVersion": 1,
@@ -620,7 +630,7 @@ def build_scenario(temp_root: Path, config: dict[str, Any], browser_host: str, b
         shutil.copy2(kompas_sample, kompas_sample_copy)
 
     scenario = {
-        "utilityBaseUrl": config["ListenUrl"],
+        "utilityBaseUrl": config["Server"]["ListenUrl"],
         "pairingToken": config["Security"]["PairingToken"],
         "profileId": "e2e",
         "hostBaseUrl": f"http://{browser_host}:{browser_port}",
@@ -631,7 +641,7 @@ def build_scenario(temp_root: Path, config: dict[str, Any], browser_host: str, b
             "latencyIterations": latency_iterations,
             "reconnectIntervalSeconds": 60,
             "postDisconnectGraceSeconds": 5,
-            "idleWindowSeconds": int(config["IdleSeconds"]),
+            "idleWindowSeconds": int(config["Lifecycle"]["IdleSeconds"]),
         },
         "system": {
             "root": str(system_dir.resolve()),
@@ -661,7 +671,8 @@ def build_scenario(temp_root: Path, config: dict[str, Any], browser_host: str, b
             "numberFormat": "0.00",
             "fillColor": 65535,
             "alignmentCenter": -4108,
-            "borderLineStyle": 1
+            "borderLineStyle": 1,
+            "visualPauseMs": 5000
         },
         "kompas": {
             "hasSample": kompas_sample is not None,
@@ -947,7 +958,7 @@ def main() -> int:
         wait_http_json("http://127.0.0.1:5510/api/status", timeout_seconds=30)
         utility_process = start_utility(config_path, temp_root)
         try:
-            wait_health(config["ListenUrl"], timeout_seconds=90)
+            wait_health(config["Server"]["ListenUrl"], timeout_seconds=90)
             probe_observed = False
             for _ in range(25):
                 status = wait_http_json("http://127.0.0.1:5510/api/status", timeout_seconds=5)

@@ -115,9 +115,9 @@ dotnet publish src\WebBridge.Utility\WebBridge.Utility.csproj `
 
 Это полный пример:
 
-- встроенные команды
-- `ComAdapters`
-- `SystemAdapter`
+- `Versions`
+- встроенный `Catalog`
+- полный блок `Adapters`
 - embedded `Profiles`
 - embedded `Manifest`
 
@@ -132,14 +132,16 @@ dotnet publish src\WebBridge.Utility\WebBridge.Utility.csproj `
 Он содержит только:
 
 - метаданные продукта
-- `ListenUrl`
-- `UiUrl`
-- lifecycle-политику
+- `Runtime`
+- `Server`
+- `Ui`
+- `Lifecycle`
 - security-политику
 - session-настройки
 - логирование
-- пустые `Profiles`
-- пустые `ComAdapters`
+- storage для локальных артефактов
+- пустой `Catalog`
+- пустой `Adapters`
 
 Практический смысл:
 
@@ -149,21 +151,26 @@ dotnet publish src\WebBridge.Utility\WebBridge.Utility.csproj `
 
 ## Структура Config
 
+Канонический формат конфига теперь единственный: вложенный. Плоские ключи вроде `ListenUrl`, `UiUrl`, `OpenUi`, `Shutdown`, `LogLevel`, `Profiles`, `ComAdapters` и `SystemAdapter` больше не поддерживаются. Актуальная схема начинается с `ConfigSchemaVersion = 2` внутри блока `Versions`.
+
 | Блок | Назначение |
 |---|---|
-| `UtilityVersion` | версия утилиты |
-| `ConfigVersion` | версия текущего конфига |
-| `ConfigSchemaVersion` | версия схемы конфига |
+| `Versions` | версия утилиты, версия текущего конфига и версия схемы |
 | `Metadata` | имя продукта, автор, описание, URL репозитория |
-| `ListenUrl` | локальный loopback URL утилиты |
-| `UiUrl` | URL страницы UI |
-| `OpenUi` | `Auto`, `Always`, `Never` |
-| `Shutdown` | `WhenIdle`, `Manual`, `Never` |
+| `Runtime` | среда (`EnvironmentName`), dev-режим, запрет автооткрытия браузера |
+| `Server` | локальный loopback URL утилиты (`ListenUrl`) |
+| `Ui` | адрес UI, режим автооткрытия и ожидание первой сессии |
+| `Lifecycle` | idle shutdown-policy и таймаут простоя |
+| `Logging` | уровень логов, debug-режим и путь к log-файлу |
+| `Storage` | где хранить profiles, cache и diagnostics |
+| `Catalog` | URL удалённого manifest, embedded manifest и embedded profiles |
+| `Adapters` | descriptors для COM-адаптеров и policy для `system` |
 | `Security` | `PairingToken`, allowlist origin, loopback-policy |
 | `Session` | heartbeat, presence, sweep |
-| `Profiles` | набор команд |
-| `ComAdapters` | descriptors для Excel и KOMPAS |
-| `SystemAdapter` | policy и controlled wrappers для `system` |
+
+Обычно руками правят только `Runtime`, `Server`, `Ui`, `Lifecycle`, `Logging`, `Security` и `Session`.
+
+Редко приходится менять `Versions`, `Catalog` и `Adapters`: это схема/каталог команд/описание адаптеров, а не базовые настройки запуска.
 
 ## API
 
@@ -295,10 +302,24 @@ POST /commands/execute-batch
 POST /config/load
 {
   "settings": {
-    "configVersion": "runtime-2026-03-09",
-    "profiles": [ ... ],
-    "comAdapters": [ ... ],
-    "systemAdapter": { ... }
+    "versions": {
+      "configVersion": "runtime-2026-03-09",
+      "configSchemaVersion": 2
+    },
+    "runtime": {
+      "environmentName": "Production"
+    },
+    "ui": {
+      "url": "https://example.test/app/",
+      "openMode": "Never"
+    },
+    "catalog": {
+      "profiles": [ ... ]
+    },
+    "adapters": {
+      "com": [ ... ],
+      "system": { ... }
+    }
   },
   "persist": false
 }
@@ -351,6 +372,12 @@ POST /config/load
 | 6 | После этого UI использует `/commands/execute` и `/commands/execute-batch` |
 
 ## Тестирование
+
+Быстрая локальная проверка:
+
+```powershell
+dotnet test WebBridge.Utility.sln
+```
 
 Для black-box E2E используется внешний browser-driven harness:
 
