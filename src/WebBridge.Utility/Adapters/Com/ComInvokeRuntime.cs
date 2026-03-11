@@ -45,6 +45,8 @@ public sealed class UnavailableComInvokeRuntime : IReflectiveInvokeRuntime
     public object ResolveRoot(string rootName, JsonObject arguments)
         => throw new InvalidOperationException(_message);
 
+    public object? AdaptValue(object? value) => value;
+
     public JsonNode? ConvertResult(object? value, InvokeDefinition definition, JsonObject arguments)
         => throw new InvalidOperationException(_message);
 
@@ -58,32 +60,65 @@ public sealed class UnavailableComInvokeRuntime : IReflectiveInvokeRuntime
 }
 
 [SupportedOSPlatform("windows")]
-public sealed class ComInvokeRuntime : ComAutomationRuntimeBase, IReflectiveInvokeRuntime, IHandleArgumentResolver, IDisposable
+public sealed class ComInvokeRuntime : ComAutomationRuntimeBase, IReflectiveInvokeRuntime, IHandleArgumentResolver, IReflectiveInvokeCastRuntime, IDisposable
 {
-    private readonly UtilitySettings _settings;
+    private readonly ComInvokeDescriptor _descriptor;
     private readonly string _adapterName;
+    private readonly ComSurfaceCatalog _catalog;
     private readonly StaOperationDispatcher _dispatcher;
     private readonly Dictionary<string, CachedComApplication> _applicationsByProgId = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, ComSharedContext> _contexts = new(StringComparer.OrdinalIgnoreCase);
 
-    public ComInvokeRuntime(UtilitySettings settings, string adapterName, string dispatcherName)
+    public ComInvokeRuntime(ComInvokeDescriptor descriptor)
     {
-        _settings = settings;
-        _adapterName = adapterName;
-        _dispatcher = new StaOperationDispatcher(dispatcherName);
+        _descriptor = descriptor;
+        _adapterName = descriptor.AdapterName;
+        _catalog = new ComSurfaceCatalog(descriptor);
+        _dispatcher = new StaOperationDispatcher(
+            string.IsNullOrWhiteSpace(descriptor.DispatcherName)
+                ? $"{descriptor.DisplayName} COM"
+                : descriptor.DispatcherName);
     }
 
     public string AdapterName => _adapterName;
 
     public object ResolveRoot(string rootName, JsonObject arguments)
     {
-        ComInvokeDescriptor descriptor = GetDescriptor();
         return rootName.ToLowerInvariant() switch
         {
-            "application" => GetApplication(arguments, descriptor),
-            "handle" => ResolveHandleRoot(arguments, descriptor),
-            _ => throw new InvalidOperationException($"{descriptor.DisplayName} root '{rootName}' is not supported."),
+            "application" => GetApplication(arguments, _descriptor),
+            "handle" => ResolveHandleRoot(arguments, _descriptor),
+            _ => throw new InvalidOperationException($"{_descriptor.DisplayName} root '{rootName}' is not supported."),
         };
+    }
+
+    public object? AdaptValue(object? value)
+    {
+        if (value is null)
+        {
+            return null;
+        }
+
+        if (value is ComRuntimeValue runtimeValue)
+        {
+            return runtimeValue;
+        }
+
+        if (!ShouldWrapValue(value))
+        {
+            return value;
+        }
+
+        ResolvedComSurface? surface = _catalog.ResolveSurfaceForValue(value);
+        ComHandleInfo handleInfo = RegisterHandleInfo(
+            value,
+            _descriptor.AdapterName,
+            surface?.Name,
+            surface is null ? null : [surface.Name]);
+        object currentValue = surface is not null && handleInfo.TryGetSurfaceValue(surface.Name, out object? resolvedSurfaceValue)
+            ? resolvedSurfaceValue ?? value
+            : value;
+        return new ComRuntimeValue(this, currentValue, handleInfo, surface?.Name ?? handleInfo.CurrentSurface);
     }
 
     public JsonNode? ConvertResult(object? value, InvokeDefinition definition, JsonObject arguments)
@@ -93,71 +128,119 @@ public sealed class ComInvokeRuntime : ComAutomationRuntimeBase, IReflectiveInvo
             return null;
         }
 
-        ComInvokeDescriptor descriptor = GetDescriptor();
-        bool compact = IsCompactMode(arguments);
-        foreach (ComResultHintDefinition hint in descriptor.ResultHints)
+        object adapted = AdaptValue(value) ?? value;
+        if (adapted is ComRuntimeValue runtimeValue)
         {
-            if (TryConvertWithHint(value, hint, compact, out JsonNode? node))
+            return ConvertRuntimeValue(runtimeValue, arguments);
+        }
+
+        bool compact = IsCompactMode(arguments);
+        foreach (ComResultHintDefinition hint in _descriptor.ResultHints)
+        {
+            if (TryConvertWithHint(adapted, hint, compact, out JsonNode? node))
             {
-                UpdateSharedContext(arguments, hint.Name, value, node);
+                UpdateSharedContext(arguments, hint.Name, adapted, node);
                 return node;
             }
         }
 
-        if (TryConvertGenericComObject(value, out JsonNode? comNode))
+        if (TryConvertGenericComObject(adapted, out JsonNode? comNode))
         {
-            UpdateSharedContext(arguments, "last", value, comNode);
+            UpdateSharedContext(arguments, "last", adapted, comNode);
             return comNode;
         }
 
-        return InvokeJsonNodeConverter.Convert(value);
+        return InvokeJsonNodeConverter.Convert(adapted);
     }
 
     public ReportVerbosity GetDefaultReportVerbosity(JsonObject arguments)
     {
-        ComInvokeDescriptor descriptor = GetDescriptor();
-        return descriptor.CompactReportDefault || ReadBoolean(arguments, "realtime")
+        return _descriptor.CompactReportDefault || ReadBoolean(arguments, "realtime")
             ? ReportVerbosity.Compact
             : ReportVerbosity.Full;
     }
 
     public Task<T> RunAsync<T>(Func<T> action, CancellationToken cancellationToken)
     {
-        ComInvokeDescriptor descriptor = GetDescriptor();
         StaInvocationOptions options = new()
         {
             AdapterName = _adapterName,
             DispatcherName = _dispatcher.Name,
-            BusyRetryDelaysMs = descriptor.BusyRetryDelaysMs.Count == 0
+            BusyRetryDelaysMs = _descriptor.BusyRetryDelaysMs.Count == 0
                 ? Array.Empty<int>()
-                : descriptor.BusyRetryDelaysMs.ToArray(),
-            BusyRetryMaxAttempts = descriptor.BusyRetryMaxAttempts,
+                : _descriptor.BusyRetryDelaysMs.ToArray(),
+            BusyRetryMaxAttempts = _descriptor.BusyRetryMaxAttempts,
         };
         return _dispatcher.InvokeAsync(action, options, cancellationToken);
     }
 
     public CommandExecutionResult MapInvokeException(string commandId, Exception exception, InvokeDefinition definition)
     {
-        ComInvokeDescriptor descriptor = GetDescriptor();
         return exception switch
         {
-            COMException comException => CommandExecutionResult.Fail(descriptor.ComErrorCode, comException.Message),
+            COMException comException => CommandExecutionResult.Fail(_descriptor.ComErrorCode, comException.Message),
             InvalidOperationException invalidOperationException
-                when !string.IsNullOrWhiteSpace(descriptor.NotFoundMessageFragment) &&
-                    invalidOperationException.Message.Contains(descriptor.NotFoundMessageFragment, StringComparison.OrdinalIgnoreCase)
-                => CommandExecutionResult.Fail(descriptor.NotFoundErrorCode ?? descriptor.InvokeErrorCode, invalidOperationException.Message),
+                when !string.IsNullOrWhiteSpace(_descriptor.NotFoundMessageFragment) &&
+                    invalidOperationException.Message.Contains(_descriptor.NotFoundMessageFragment, StringComparison.OrdinalIgnoreCase)
+                => CommandExecutionResult.Fail(_descriptor.NotFoundErrorCode ?? _descriptor.InvokeErrorCode, invalidOperationException.Message),
             InvalidOperationException invalidOperationException
                 when invalidOperationException.Message.Contains("ProgID", StringComparison.OrdinalIgnoreCase)
-                => CommandExecutionResult.Fail(descriptor.UnavailableErrorCode, invalidOperationException.Message),
-            InvalidOperationException invalidOperationException => CommandExecutionResult.Fail(descriptor.InvokeErrorCode, invalidOperationException.Message),
-            _ => CommandExecutionResult.Fail(descriptor.InvokeErrorCode, exception.Message),
+                => CommandExecutionResult.Fail(_descriptor.UnavailableErrorCode, invalidOperationException.Message),
+            InvalidOperationException invalidOperationException => CommandExecutionResult.Fail(_descriptor.InvokeErrorCode, invalidOperationException.Message),
+            _ => CommandExecutionResult.Fail(_descriptor.InvokeErrorCode, exception.Message),
         };
     }
 
     public object ResolveHandleArgument(string handleId)
+        => ResolveRegisteredHandleInfo(handleId, _descriptor.DisplayName).ResolveCurrentValue();
+
+    public object? CastValue(object? value, string target, InvokeCastSemantics semantics)
     {
-        ComInvokeDescriptor descriptor = GetDescriptor();
-        return ResolveRegisteredHandle(handleId, descriptor.DisplayName);
+        if (value is null)
+        {
+            return semantics == InvokeCastSemantics.TryCast
+                ? null
+                : throw new InvalidOperationException(
+                    $"{_descriptor.DisplayName} cannot cast a null value to '{target}'.");
+        }
+
+        object adapted = AdaptValue(value) ?? value;
+        object sourceValue = adapted is IReflectiveInvocationValueAdapter invocationValueAdapter
+            ? invocationValueAdapter.GetInvocationValue() ?? value
+            : adapted;
+        ComRuntimeValue? runtimeValue = adapted as ComRuntimeValue;
+        ResolvedComCastTarget resolvedTarget = _catalog.ResolveCastTarget(target);
+        if (ComSurfaceCatalog.TryResolveValue(sourceValue, resolvedTarget, out object? castValue, out string? resolvedSurface))
+        {
+            string? surfaceName = resolvedSurface;
+            ComHandleInfo handleInfo = runtimeValue?.HandleInfo ?? RegisterHandleInfo(
+                sourceValue,
+                _descriptor.AdapterName,
+                runtimeValue?.CurrentSurface,
+                runtimeValue?.HandleInfo.ResolvedInterfaces);
+            if (!string.IsNullOrWhiteSpace(surfaceName) && castValue is not null)
+            {
+                handleInfo.RememberSurfaceValue(surfaceName, castValue);
+            }
+
+            return castValue is null
+                ? null
+                : new ComRuntimeValue(this, castValue, handleInfo, surfaceName ?? runtimeValue?.CurrentSurface);
+        }
+
+        if (semantics == InvokeCastSemantics.TryCast)
+        {
+            return null;
+        }
+
+        string runtimeType = sourceValue.GetType().FullName ?? sourceValue.GetType().Name;
+        string currentSurface = runtimeValue?.CurrentSurface ?? _catalog.ResolveSurfaceForValue(sourceValue)?.Name ?? "<unknown>";
+        string possibleCasts = string.Join(", ", GetPossibleCasts(sourceValue, runtimeValue?.CurrentSurface));
+        string suffix = string.IsNullOrWhiteSpace(possibleCasts)
+            ? string.Empty
+            : $" Possible casts: {possibleCasts}.";
+        throw new InvalidOperationException(
+            $"{_descriptor.DisplayName} cannot cast runtime type '{runtimeType}' from surface '{currentSurface}' to '{target}'.{suffix}");
     }
 
     public void Dispose()
@@ -169,16 +252,95 @@ public sealed class ComInvokeRuntime : ComAutomationRuntimeBase, IReflectiveInvo
         _dispatcher.Dispose();
     }
 
-    private ComInvokeDescriptor GetDescriptor()
+    internal ResolvedComSurface? ResolveSurface(string? currentSurface, object value)
+        => _catalog.ResolveCurrentSurface(value, currentSurface);
+
+    internal IReadOnlyList<string> GetAvailableMembers(object value, string? currentSurface)
+        => _catalog.GetAvailableMembers(UnwrapValue(value), currentSurface);
+
+    internal IReadOnlyList<string> GetPossibleCasts(object value, string? currentSurface)
+        => _catalog.GetPossibleCasts(UnwrapValue(value), currentSurface);
+
+    internal Exception CreateInvokeDiagnosticException(object value, string? currentSurface, string member, Exception exception)
     {
-        ComInvokeDescriptor? descriptor = _settings.ComAdapters
-            .FirstOrDefault(candidate => string.Equals(candidate.AdapterName, _adapterName, StringComparison.OrdinalIgnoreCase));
-        if (descriptor is null)
+        object candidate = UnwrapValue(value);
+        string runtimeType = candidate.GetType().FullName ?? candidate.GetType().Name;
+        string surfaceName = currentSurface ?? _catalog.ResolveSurfaceForValue(candidate)?.Name ?? "<unknown>";
+        string availableMembers = string.Join(", ", GetAvailableMembers(candidate, currentSurface).Take(16));
+        string castHints = string.Join(", ", _catalog.FindCastsForMember(candidate, member, currentSurface));
+        string castMessage = string.IsNullOrWhiteSpace(castHints)
+            ? string.Empty
+            : $" Try cast({castHints.Split(',')[0].Trim()}).";
+        string membersMessage = string.IsNullOrWhiteSpace(availableMembers)
+            ? string.Empty
+            : $" Available members: {availableMembers}.";
+        return new InvalidOperationException(
+            $"{_descriptor.DisplayName} could not resolve member '{member}' on runtime type '{runtimeType}' using surface '{surfaceName}'.{membersMessage}{castMessage} {exception.Message}".Trim(),
+            exception);
+    }
+
+    private JsonNode? ConvertRuntimeValue(ComRuntimeValue value, JsonObject arguments)
+    {
+        bool compact = IsCompactMode(arguments);
+        object rawValue = value.GetInvocationValue() ?? value;
+        foreach (ComResultHintDefinition hint in _descriptor.ResultHints)
         {
-            throw new InvalidOperationException($"COM adapter descriptor '{_adapterName}' was not found in config.");
+            if (TryConvertWithHint(rawValue, hint, compact, out JsonNode? node))
+            {
+                JsonNode? decorated = DecorateNode(value, node);
+                UpdateSharedContext(arguments, hint.Name, value, decorated);
+                return decorated;
+            }
         }
 
-        return descriptor;
+        JsonObject fallback = new()
+        {
+            ["stringValue"] = rawValue.ToString(),
+        };
+        JsonNode? decoratedFallback = DecorateNode(value, fallback);
+        UpdateSharedContext(arguments, "last", value, decoratedFallback);
+        return decoratedFallback;
+    }
+
+    private bool ShouldWrapValue(object value)
+    {
+        if (value is ComRuntimeValue)
+        {
+            return true;
+        }
+
+        if (_catalog.HasConfiguredSurfaces && _catalog.ResolveSurfaceForValue(value) is not null)
+        {
+            return true;
+        }
+
+        return Marshal.IsComObject(value) || value.GetType().IsCOMObject || FindHandleInfo(value) is not null;
+    }
+
+    private static object UnwrapValue(object value)
+        => value is IReflectiveInvocationValueAdapter adapter ? adapter.GetInvocationValue() ?? value : value;
+
+    private JsonObject DecorateNode(ComRuntimeValue runtimeValue, JsonNode? node)
+    {
+        JsonObject objectNode = node as JsonObject ?? new JsonObject { ["value"] = node?.DeepClone() };
+        objectNode["handleId"] ??= runtimeValue.HandleInfo.HandleId;
+        objectNode["adapter"] = _descriptor.AdapterName;
+        objectNode["runtimeType"] = runtimeValue.HandleInfo.RuntimeType;
+        objectNode["surface"] = runtimeValue.CurrentSurface;
+        objectNode["resolvedInterfaces"] = new JsonArray(
+            runtimeValue.HandleInfo.ResolvedInterfaces
+                .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+                .Select(name => (JsonNode?)JsonValue.Create(name))
+                .ToArray());
+        objectNode["memberNames"] = new JsonArray(
+            GetAvailableMembers(runtimeValue.GetInvocationValue() ?? runtimeValue, runtimeValue.CurrentSurface)
+                .Select(name => (JsonNode?)JsonValue.Create(name))
+                .ToArray());
+        objectNode["possibleCasts"] = new JsonArray(
+            GetPossibleCasts(runtimeValue.GetInvocationValue() ?? runtimeValue, runtimeValue.CurrentSurface)
+                .Select(name => (JsonNode?)JsonValue.Create(name))
+                .ToArray());
+        return objectNode;
     }
 
     private object GetApplication(JsonObject arguments, ComInvokeDescriptor descriptor)
@@ -306,17 +468,27 @@ public sealed class ComInvokeRuntime : ComAutomationRuntimeBase, IReflectiveInvo
             return;
         }
 
-        string handleId = RegisterHandle(value);
+        object rawValue = UnwrapValue(value);
+        string? surfaceName = value is ComRuntimeValue runtimeValue
+            ? runtimeValue.CurrentSurface
+            : _catalog.ResolveSurfaceForValue(rawValue)?.Name;
+        ComHandleInfo handleInfo = value is ComRuntimeValue existingRuntimeValue
+            ? existingRuntimeValue.HandleInfo
+            : RegisterHandleInfo(
+                rawValue,
+                _descriptor.AdapterName,
+                surfaceName,
+                surfaceName is null ? null : [surfaceName]);
         ComSharedContext context = GetOrCreateContext(sharedContextId);
-        context.LastHandleId = handleId;
+        context.LastHandleId = handleInfo.HandleId;
         if (!string.IsNullOrWhiteSpace(hintName))
         {
-            context.NamedHandleIds[hintName] = handleId;
+            context.NamedHandleIds[hintName] = handleInfo.HandleId;
         }
 
         if (node is JsonObject objectNode)
         {
-            objectNode["handleId"] = handleId;
+            objectNode["handleId"] = handleInfo.HandleId;
         }
     }
 
@@ -417,10 +589,18 @@ public sealed class ComInvokeRuntime : ComAutomationRuntimeBase, IReflectiveInvo
     {
         JsonObject node = new();
         string? runtimeProgId = TryResolveRuntimeProgId(value);
+        string? surfaceName = _catalog.ResolveSurfaceForValue(value)?.Name;
+        ComHandleInfo? handleInfo = ShouldWrapValue(value)
+            ? RegisterHandleInfo(
+                value,
+                _descriptor.AdapterName,
+                surfaceName,
+                surfaceName is null ? null : [surfaceName])
+            : null;
 
         if (hint.IncludeHandleId)
         {
-            node["handleId"] = RegisterHandle(value);
+            node["handleId"] = handleInfo?.HandleId;
         }
 
         IReadOnlyList<ComResultFieldDefinition> fields = compact && hint.CompactFields.Count > 0
@@ -429,6 +609,26 @@ public sealed class ComInvokeRuntime : ComAutomationRuntimeBase, IReflectiveInvo
         foreach (ComResultFieldDefinition field in fields)
         {
             node[field.Name] = ResolveFieldValue(value, field, runtimeProgId);
+        }
+
+        if (handleInfo is not null)
+        {
+            node["adapter"] = _descriptor.AdapterName;
+            node["runtimeType"] = handleInfo.RuntimeType;
+            node["surface"] = surfaceName;
+            node["resolvedInterfaces"] = new JsonArray(
+                handleInfo.ResolvedInterfaces
+                    .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+                    .Select(name => (JsonNode?)JsonValue.Create(name))
+                    .ToArray());
+            node["memberNames"] = new JsonArray(
+                GetAvailableMembers(value, surfaceName)
+                    .Select(name => (JsonNode?)JsonValue.Create(name))
+                    .ToArray());
+            node["possibleCasts"] = new JsonArray(
+                GetPossibleCasts(value, surfaceName)
+                    .Select(name => (JsonNode?)JsonValue.Create(name))
+                    .ToArray());
         }
 
         return node;
@@ -534,7 +734,12 @@ public sealed class ComInvokeRuntime : ComAutomationRuntimeBase, IReflectiveInvo
         ComSharedContext context = GetOrCreateContext(sharedContextId);
         context.ApplicationProgId = progId;
         context.Application = application;
-        context.LastHandleId = RegisterHandle(application);
+        string? surfaceName = _catalog.ResolveSurfaceForValue(application)?.Name;
+        context.LastHandleId = RegisterHandleInfo(
+            application,
+            _descriptor.AdapterName,
+            surfaceName,
+            surfaceName is null ? null : [surfaceName]).HandleId;
         context.NamedHandleIds["application"] = context.LastHandleId;
     }
 
@@ -564,12 +769,12 @@ public sealed class ComInvokeRuntime : ComAutomationRuntimeBase, IReflectiveInvo
             if (!string.IsNullOrWhiteSpace(handleKey) &&
                 context.NamedHandleIds.TryGetValue(handleKey, out string? namedHandleId))
             {
-                return ResolveRegisteredHandle(namedHandleId, descriptor.DisplayName);
+                return ResolveRegisteredHandleInfo(namedHandleId, descriptor.DisplayName).ResolveCurrentValue();
             }
 
             if (!string.IsNullOrWhiteSpace(context.LastHandleId))
             {
-                return ResolveRegisteredHandle(context.LastHandleId, descriptor.DisplayName);
+                return ResolveRegisteredHandleInfo(context.LastHandleId, descriptor.DisplayName).ResolveCurrentValue();
             }
         }
 
@@ -688,6 +893,10 @@ public sealed class ComInvokeDescriptor
 
     public bool CompactReportDefault { get; set; }
 
+    public List<string> InteropAssemblies { get; set; } = new();
+
+    public List<ComSurfaceDefinition> Surfaces { get; set; } = new();
+
     public List<ComMemberAssignmentDefinition> ApplicationAssignments { get; set; } = new();
 
     public List<ComMemberAssignmentDefinition> VisibleApplicationAssignments { get; set; } = new();
@@ -717,11 +926,35 @@ public sealed class ComInvokeDescriptor
             BusyRetryMaxAttempts = BusyRetryMaxAttempts,
             BusyRetryDelaysMs = BusyRetryDelaysMs.ToList(),
             CompactReportDefault = CompactReportDefault,
+            InteropAssemblies = InteropAssemblies.ToList(),
+            Surfaces = Surfaces.Select(surface => surface.Clone()).ToList(),
             ApplicationAssignments = ApplicationAssignments.Select(assignment => assignment.Clone()).ToList(),
             VisibleApplicationAssignments = VisibleApplicationAssignments.Select(assignment => assignment.Clone()).ToList(),
             WarmupAssignments = WarmupAssignments.Select(assignment => assignment.Clone()).ToList(),
             RealtimeAssignments = RealtimeAssignments.Select(assignment => assignment.Clone()).ToList(),
             ResultHints = ResultHints.Select(hint => hint.Clone()).ToList(),
+        };
+    }
+}
+
+public sealed class ComSurfaceDefinition
+{
+    public string Name { get; set; } = string.Empty;
+
+    public string? ClrTypeName { get; set; }
+
+    public List<string> Aliases { get; set; } = new();
+
+    public string? Iid { get; set; }
+
+    public ComSurfaceDefinition Clone()
+    {
+        return new ComSurfaceDefinition
+        {
+            Name = Name,
+            ClrTypeName = ClrTypeName,
+            Aliases = Aliases.ToList(),
+            Iid = Iid,
         };
     }
 }

@@ -19,6 +19,7 @@ public sealed class RuntimeConfigurationManager : IRuntimeConfigurationManager
     private readonly ILogger<RuntimeConfigurationManager> _logger;
     private readonly object _sync = new();
     private DateTimeOffset _loadedAtUtc;
+    private long _generation;
 
     public RuntimeConfigurationManager(
         UtilitySettings settings,
@@ -65,6 +66,14 @@ public sealed class RuntimeConfigurationManager : IRuntimeConfigurationManager
             profiles);
     }
 
+    public long GetGeneration()
+    {
+        lock (_sync)
+        {
+            return _generation;
+        }
+    }
+
     public async Task<ConfigUpdateResponse> ApplyAsync(LoadConfigRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -84,6 +93,7 @@ public sealed class RuntimeConfigurationManager : IRuntimeConfigurationManager
         {
             _settings.ApplyFrom(next);
             _loadedAtUtc = _clock.UtcNow;
+            _generation++;
         }
 
         if (request.Persist)

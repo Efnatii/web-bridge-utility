@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using WebBridge.Utility.Adapters.Com;
 using WebBridge.Utility.Protocol;
 
 namespace WebBridge.Utility.Core;
@@ -80,6 +81,11 @@ public interface ICommandPlanCompiler
     PreparedCommandPlan Compile(ProfileDefinition profile, CommandDefinition definition);
 }
 
+public interface IAdapterInvokeSurfaceRegistry
+{
+    bool TryGetSurface(string adapterName, out IAdapterInvokeSurface? surface);
+}
+
 public interface IAdapterInvokeSurface
 {
     string AdapterName { get; }
@@ -93,6 +99,8 @@ public interface IReflectiveInvokeRuntime
 
     object? ResolveRoot(string rootName, JsonObject arguments);
 
+    object? AdaptValue(object? value);
+
     JsonNode? ConvertResult(object? value, InvokeDefinition definition, JsonObject arguments);
 
     ReportVerbosity GetDefaultReportVerbosity(JsonObject arguments);
@@ -105,6 +113,16 @@ public interface IReflectiveInvokeRuntime
 public interface IHandleArgumentResolver
 {
     object ResolveHandleArgument(string handleId);
+}
+
+public interface IComInvokeSurfaceFactory
+{
+    IAdapterInvokeSurface Create(ComInvokeDescriptor descriptor);
+}
+
+public interface IReflectiveInvokeCastRuntime
+{
+    object? CastValue(object? value, string target, InvokeCastSemantics semantics);
 }
 
 public interface IPathArgumentNormalizer
@@ -151,6 +169,8 @@ public interface IRuntimeConfigurationManager
     UtilitySettings GetSettingsSnapshot();
 
     ConfigVersionResponse GetVersion();
+
+    long GetGeneration();
 
     Task<ConfigUpdateResponse> ApplyAsync(LoadConfigRequest request, CancellationToken cancellationToken);
 
@@ -230,4 +250,11 @@ public sealed record ManifestStatusSnapshot(
     string? Checksum,
     DateTimeOffset? LastUpdatedUtc,
     ApiError? LastError);
+
+public enum InvokeCastSemantics
+{
+    Cast,
+    TryCast,
+    QueryInterface,
+}
 

@@ -7,12 +7,17 @@ namespace WebBridge.Utility.Core;
 
 public sealed class CommandPlanCompiler : ICommandPlanCompiler
 {
-    private readonly Dictionary<string, IAdapterInvokeSurface> _surfaces;
+    private readonly IAdapterInvokeSurfaceRegistry _surfaceRegistry;
+    private readonly IRuntimeConfigurationManager _configurationManager;
     private readonly ConcurrentDictionary<string, PreparedCommandPlan> _cache = new(StringComparer.OrdinalIgnoreCase);
+    private long _observedGeneration = -1;
 
-    public CommandPlanCompiler(IEnumerable<IAdapterInvokeSurface> surfaces)
+    public CommandPlanCompiler(
+        IAdapterInvokeSurfaceRegistry surfaceRegistry,
+        IRuntimeConfigurationManager configurationManager)
     {
-        _surfaces = surfaces.ToDictionary(surface => surface.AdapterName, StringComparer.OrdinalIgnoreCase);
+        _surfaceRegistry = surfaceRegistry;
+        _configurationManager = configurationManager;
     }
 
     public PreparedCommandPlan Compile(ProfileDefinition profile, CommandDefinition definition)
@@ -20,7 +25,14 @@ public sealed class CommandPlanCompiler : ICommandPlanCompiler
         ArgumentNullException.ThrowIfNull(profile);
         ArgumentNullException.ThrowIfNull(definition);
 
-        string cacheKey = $"{profile.ProfileId}:{profile.Checksum ?? "no-checksum"}:{definition.CommandId}";
+        long generation = _configurationManager.GetGeneration();
+        if (generation != Interlocked.Read(ref _observedGeneration))
+        {
+            _cache.Clear();
+            Interlocked.Exchange(ref _observedGeneration, generation);
+        }
+
+        string cacheKey = $"{generation}:{profile.ProfileId}:{profile.Checksum ?? "no-checksum"}:{definition.CommandId}";
         return _cache.GetOrAdd(cacheKey, _ =>
         {
             if (definition.Invoke is null)
@@ -28,12 +40,13 @@ public sealed class CommandPlanCompiler : ICommandPlanCompiler
                 throw new InvalidOperationException($"Command '{definition.CommandId}' does not define invoke metadata.");
             }
 
-            if (!_surfaces.TryGetValue(definition.Adapter, out IAdapterInvokeSurface? surface))
+            if (!_surfaceRegistry.TryGetSurface(definition.Adapter, out IAdapterInvokeSurface? surface))
             {
                 throw new InvalidOperationException($"Adapter invoke surface '{definition.Adapter}' is not registered.");
             }
 
-            return surface.Compile(definition);
+            return surface?.Compile(definition)
+                ?? throw new InvalidOperationException($"Adapter invoke surface '{definition.Adapter}' returned null.");
         });
     }
 }

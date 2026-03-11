@@ -57,14 +57,8 @@ public static class UtilityApp
         builder.Services.AddSingleton<IProfileStore>(_ => new ProfileStore(settings));
         builder.Services.AddSingleton<SystemRuntime>(_ => new SystemRuntime(settings));
         builder.Services.AddSingleton<SystemInvokeSurface>();
-        builder.Services.AddSingleton<IAdapterInvokeSurface>(sp => sp.GetRequiredService<SystemInvokeSurface>());
-        foreach (ComInvokeDescriptor descriptor in settings.ComAdapters
-                     .Where(candidate => !string.IsNullOrWhiteSpace(candidate.AdapterName))
-                     .GroupBy(candidate => candidate.AdapterName, StringComparer.OrdinalIgnoreCase)
-                     .Select(group => group.First().Clone()))
-        {
-            builder.Services.AddSingleton<IAdapterInvokeSurface>(_ => CreateComInvokeSurface(settings, descriptor));
-        }
+        builder.Services.AddSingleton<IComInvokeSurfaceFactory, ComInvokeSurfaceFactory>();
+        builder.Services.AddSingleton<IAdapterInvokeSurfaceRegistry, AdapterInvokeSurfaceRegistry>();
         builder.Services.AddSingleton<ICommandPlanCompiler, CommandPlanCompiler>();
         builder.Services.AddSingleton<ICommandDispatcher, CommandDispatcher>();
         builder.Services.AddSingleton<SessionSocketHub>();
@@ -288,24 +282,6 @@ public static class UtilityApp
         });
 
         app.Map(ProtocolConstants.SessionWebSocketPath, HandleWebSocketAsync);
-    }
-
-    private static ComInvokeSurface CreateComInvokeSurface(UtilitySettings settings, ComInvokeDescriptor descriptor)
-    {
-        IReflectiveInvokeRuntime runtime = OperatingSystem.IsWindows()
-            ? new ComInvokeRuntime(
-                settings,
-                descriptor.AdapterName,
-                string.IsNullOrWhiteSpace(descriptor.DispatcherName)
-                    ? $"{descriptor.DisplayName} COM"
-                    : descriptor.DispatcherName)
-            : new UnavailableComInvokeRuntime(
-                descriptor.AdapterName,
-                string.IsNullOrWhiteSpace(descriptor.UnavailableMessage)
-                    ? $"{descriptor.DisplayName} COM runtime is not available."
-                    : descriptor.UnavailableMessage,
-                descriptor.UnavailableErrorCode);
-        return new ComInvokeSurface(runtime);
     }
 
     private static async Task HandleWebSocketAsync(HttpContext context)

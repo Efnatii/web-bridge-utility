@@ -72,7 +72,11 @@ public abstract class ReflectiveInvokeSurfaceBase<TRuntime> : IAdapterInvokeSurf
             string.Equals(operation, "set", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(operation, "call", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(operation, "index", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(operation, "new", StringComparison.OrdinalIgnoreCase);
+            string.Equals(operation, "new", StringComparison.OrdinalIgnoreCase) ||
+            Runtime is IReflectiveInvokeCastRuntime &&
+            (string.Equals(operation, "cast", StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(operation, "tryCast", StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(operation, "queryInterface", StringComparison.OrdinalIgnoreCase));
     }
 
     private async Task<CommandExecutionResult> ExecuteAsync(
@@ -114,7 +118,7 @@ public abstract class ReflectiveInvokeSurfaceBase<TRuntime> : IAdapterInvokeSurf
 
         try
         {
-            current = ResolveRoot(invoke.Root, arguments, storedValues);
+            current = Runtime.AdaptValue(ResolveRoot(invoke.Root, arguments, storedValues));
             if (current is null)
             {
                 throw new InvalidOperationException(
@@ -134,7 +138,7 @@ public abstract class ReflectiveInvokeSurfaceBase<TRuntime> : IAdapterInvokeSurf
             if (!string.IsNullOrWhiteSpace(invoke.ReturnPath))
             {
                 object? beforeReturnPath = current;
-                current = ResolvePath(current, invoke.ReturnPath!, storedValues);
+                current = Runtime.AdaptValue(ResolvePath(current, invoke.ReturnPath!, storedValues));
                 steps?.Add(new JsonObject
                 {
                     ["index"] = steps?.Count ?? 0,
@@ -203,7 +207,24 @@ public abstract class ReflectiveInvokeSurfaceBase<TRuntime> : IAdapterInvokeSurf
         JsonNode? capturedArgumentsPreview = null;
         bool captureDetailedStepReport = steps is not null;
 
-        if (string.Equals(step.Operation, "get", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(step.Operation, "cast", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(step.Operation, "tryCast", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(step.Operation, "queryInterface", StringComparison.OrdinalIgnoreCase))
+        {
+            if (Runtime is not IReflectiveInvokeCastRuntime castRuntime)
+            {
+                throw new InvalidOperationException(
+                    $"Adapter '{AdapterName}' does not support invoke operation '{step.Operation}'.");
+            }
+
+            InvokeCastSemantics semantics = string.Equals(step.Operation, "cast", StringComparison.OrdinalIgnoreCase)
+                ? InvokeCastSemantics.Cast
+                : string.Equals(step.Operation, "tryCast", StringComparison.OrdinalIgnoreCase)
+                ? InvokeCastSemantics.TryCast
+                : InvokeCastSemantics.QueryInterface;
+            after = castRuntime.CastValue(current, step.Member, semantics);
+        }
+        else if (string.Equals(step.Operation, "get", StringComparison.OrdinalIgnoreCase))
         {
             after = ReflectiveInvokeAccessor.GetMemberValue(current, step.Member);
         }
@@ -217,7 +238,7 @@ public abstract class ReflectiveInvokeSurfaceBase<TRuntime> : IAdapterInvokeSurf
         {
             InvokeCallOutcome outcome = ReflectiveInvokeAccessor.CallMember(current, step.Member, resolvedArguments);
             after = outcome.Value ?? current;
-            CaptureStoredArguments(storedValues, outcome.CapturedArguments);
+            CaptureStoredArguments(storedValues, outcome.CapturedArguments, Runtime);
             if (captureDetailedStepReport)
             {
                 capturedArgumentsPreview = CreateCapturedArgumentsPreview(outcome.CapturedArguments, invoke, arguments);
@@ -227,7 +248,7 @@ public abstract class ReflectiveInvokeSurfaceBase<TRuntime> : IAdapterInvokeSurf
         {
             InvokeCallOutcome outcome = ReflectiveInvokeAccessor.IndexValue(current, step.Member, resolvedArguments);
             after = outcome.Value;
-            CaptureStoredArguments(storedValues, outcome.CapturedArguments);
+            CaptureStoredArguments(storedValues, outcome.CapturedArguments, Runtime);
             if (captureDetailedStepReport)
             {
                 capturedArgumentsPreview = CreateCapturedArgumentsPreview(outcome.CapturedArguments, invoke, arguments);
@@ -237,7 +258,7 @@ public abstract class ReflectiveInvokeSurfaceBase<TRuntime> : IAdapterInvokeSurf
         {
             InvokeCallOutcome outcome = ReflectiveInvokeAccessor.CreateInstance(current, resolvedArguments);
             after = outcome.Value;
-            CaptureStoredArguments(storedValues, outcome.CapturedArguments);
+            CaptureStoredArguments(storedValues, outcome.CapturedArguments, Runtime);
             if (captureDetailedStepReport)
             {
                 capturedArgumentsPreview = CreateCapturedArgumentsPreview(outcome.CapturedArguments, invoke, arguments);
@@ -248,7 +269,7 @@ public abstract class ReflectiveInvokeSurfaceBase<TRuntime> : IAdapterInvokeSurf
             throw new InvalidOperationException($"Unsupported invoke operation '{step.Operation}'.");
         }
 
-        after = NormalizeAsyncResult(after);
+        after = Runtime.AdaptValue(NormalizeAsyncResult(after));
 
         if (!string.IsNullOrWhiteSpace(step.StoreAs))
         {
@@ -461,11 +482,12 @@ public abstract class ReflectiveInvokeSurfaceBase<TRuntime> : IAdapterInvokeSurf
 
     private static void CaptureStoredArguments(
         IDictionary<string, object?> storedValues,
-        IReadOnlyDictionary<string, object?> capturedArguments)
+        IReadOnlyDictionary<string, object?> capturedArguments,
+        IReflectiveInvokeRuntime runtime)
     {
         foreach ((string key, object? value) in capturedArguments)
         {
-            storedValues[key] = value;
+            storedValues[key] = runtime.AdaptValue(value);
         }
     }
 
@@ -937,6 +959,11 @@ internal interface IReflectiveInvocationProxy
     InvokeCallOutcome IndexValue(string member, ResolvedInvokeArgument[] arguments);
 
     InvokeCallOutcome CreateInstance(ResolvedInvokeArgument[] arguments);
+}
+
+internal interface IReflectiveInvocationValueAdapter
+{
+    object? GetInvocationValue();
 }
 
 public static class InvokeJsonNodeConverter
@@ -1932,6 +1959,11 @@ internal static class ReflectiveInvokeAccessor
         }
 
         object? candidateValue = value;
+        if (candidateValue is IReflectiveInvocationValueAdapter adapter)
+        {
+            candidateValue = adapter.GetInvocationValue();
+        }
+
         if (candidateValue is JsonNode jsonNode)
         {
             if (effectiveType.IsInstanceOfType(jsonNode))

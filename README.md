@@ -172,6 +172,43 @@ dotnet publish src\WebBridge.Utility\WebBridge.Utility.csproj `
 
 Редко приходится менять `Versions`, `Catalog` и `Adapters`: это схема/каталог команд/описание адаптеров, а не базовые настройки запуска.
 
+### COM Surfaces И Runtime Cast
+
+Для каждого `Adapters.Com[]` теперь можно описывать COM surfaces и interop metadata прямо в config:
+
+| Поле | Назначение |
+|---|---|
+| `InteropAssemblies` | какие interop DLL нужно загрузить перед разрешением COM interface types |
+| `Surfaces[].Name` | логическое имя surface для DSL, diagnostics и `cast(...)` |
+| `Surfaces[].ClrTypeName` | CLR type/interface name, через который runtime понимает surface |
+| `Surfaces[].Aliases` | дополнительные имена для `cast`, `tryCast` и `queryInterface` |
+| `Surfaces[].Iid` | явный IID для `QueryInterface` fallback |
+
+Новые invoke operations:
+
+- `cast`: жёсткое приведение к другому COM surface, с понятной ошибкой если surface недоступен
+- `tryCast`: то же самое, но возвращает `null`, если объект не поддерживает target surface
+- `queryInterface`: explicit COM query по alias или IID
+
+Каждый COM handle теперь несёт runtime metadata:
+
+- `handleId`
+- `adapter`
+- `runtimeType`
+- `surface`
+- `resolvedInterfaces`
+- `memberNames`
+- `possibleCasts`
+
+Это означает, что UI может:
+
+- получить handle на COM-объект
+- позже передать тот же `handleId`
+- сделать `cast` к другому интерфейсу
+- понять по diagnostics, какой member есть сейчас и какой cast нужен
+
+Изменения в `Adapters.Com` и `Surfaces` применяются сразу после `POST /config/load`, без рестарта процесса. При reload автоматически инвалидируется cache compiled command plans.
+
 ## API
 
 ### HTTP
@@ -266,6 +303,43 @@ POST /commands/execute
 }
 ```
 
+### Пример Pure DSL COM Cast
+
+```json
+{
+  "root": "application",
+  "chain": [
+    { "operation": "get", "member": "ActiveDocument" },
+    { "operation": "get", "member": "ViewsAndLayersManager" },
+    { "operation": "get", "member": "Views" },
+    { "operation": "get", "member": "ActiveView" },
+    { "operation": "cast", "member": "ISymbols2DContainer" },
+    { "operation": "get", "member": "DrawingTables" },
+    {
+      "operation": "call",
+      "member": "Add",
+      "args": [
+        { "fromArgument": "rows", "converter": "int" },
+        { "fromArgument": "cols", "converter": "int" }
+      ]
+    },
+    { "operation": "cast", "member": "ITable" },
+    {
+      "operation": "index",
+      "member": "",
+      "args": [
+        { "fromArgument": "row", "converter": "int" },
+        { "fromArgument": "col", "converter": "int" }
+      ]
+    },
+    { "operation": "get", "member": "Text" },
+    { "operation": "set", "member": "Str", "valueArgument": "value" }
+  ]
+}
+```
+
+Это тот самый сценарий, который нужен для `xlsx-to-kompas-tbl`: web UI может пройти `application -> ActiveDocument -> ActiveView`, сделать cast к `ISymbols2DContainer`, создать таблицу, перейти к `ITable`, записать `Text.Str`, затем отдельно вызвать `Save(path)` и `DrawingTables.Load(path)` уже через bridge API.
+
 ### Пример Execute Batch
 
 ```json
@@ -342,13 +416,13 @@ POST /config/load
 |---|---|
 | UI lifecycle | register, presence, interactive heartbeat, reconnect, idle shutdown |
 | Runtime management | `config/version`, `config/load`, `config/reload`, `utility/open-ui`, `utility/shutdown` |
-| Command engine | `Root`, `Chain`, `get`, `set`, `call`, `index`, `new`, `ReturnPath`, `StoreAs`, `ByRef`, `CaptureAs` |
+| Command engine | `Root`, `Chain`, `get`, `set`, `call`, `index`, `new`, `cast`, `tryCast`, `queryInterface`, `ReturnPath`, `StoreAs`, `ByRef`, `CaptureAs` |
 | Batch | `POST /commands/execute-batch` с shared context |
-| Excel | общий `ComInvokeRuntime`, `application`, `handle`, shared context, compact/full reports |
-| KOMPAS | общий `ComInvokeRuntime`, `application`, `handle`, shared context, compact/full reports |
+| Excel | общий `ComInvokeRuntime`, `application`, `handle`, recast existing handle, compact/full reports |
+| KOMPAS | общий `ComInvokeRuntime`, `application`, `handle`, runtime cast/recast, pure DSL table flow без `.ps1/.py` fallback |
 | System | generic `type:System.*` invoke и controlled wrappers `process`, `command`, `http`, `registry`, `zip`, `hash`, `drive` |
 | Security | loopback-only, origin allowlist, pairing token |
-| Diagnostics | structured logs, detailed command report, compact/full mode |
+| Diagnostics | structured logs, detailed command report, runtime type/member/cast introspection, compact/full mode |
 
 ## Чего Утилита Не Обещает
 

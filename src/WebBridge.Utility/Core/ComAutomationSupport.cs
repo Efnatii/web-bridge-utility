@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Runtime.CompilerServices;
 using System.Runtime.Versioning;
 using System.Text.Json.Nodes;
 using WebBridge.Utility.Protocol;
@@ -28,7 +30,8 @@ public sealed class AdapterInvokeSurfaceAlias : IAdapterInvokeSurface
 [SupportedOSPlatform("windows")]
 public abstract class ComAutomationRuntimeBase
 {
-    private readonly Dictionary<string, object> _handles = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, ComHandleInfo> _handles = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _handleIdsByIdentity = new(StringComparer.OrdinalIgnoreCase);
 
     protected object ResolveHandle(JsonObject arguments, string adapterDisplayName)
     {
@@ -37,32 +40,105 @@ public abstract class ComAutomationRuntimeBase
     }
 
     protected string RegisterHandle(object value, string? preferredHandleId = null)
+        => RegisterHandleInfo(value, adapterName: string.Empty, currentSurface: null, preferredHandleId: preferredHandleId).HandleId;
+
+    protected ComHandleInfo RegisterHandleInfo(
+        object value,
+        string adapterName,
+        string? currentSurface,
+        IEnumerable<string>? resolvedInterfaces = null,
+        string? preferredHandleId = null)
     {
-        foreach ((string existingId, object existingHandle) in _handles)
+        string? identityKey = TryGetObjectIdentityKey(value);
+        if (identityKey is not null &&
+            _handleIdsByIdentity.TryGetValue(identityKey, out string? existingId) &&
+            _handles.TryGetValue(existingId, out ComHandleInfo? existing))
         {
-            if (ReferenceEquals(existingHandle, value))
-            {
-                return existingId;
-            }
+            existing.Update(value, adapterName, currentSurface, resolvedInterfaces, identityKey);
+            return existing;
         }
 
         string handleId = string.IsNullOrWhiteSpace(preferredHandleId)
             ? Guid.NewGuid().ToString("N")
             : preferredHandleId;
-        _handles[handleId] = value;
-        return handleId;
+        ComHandleInfo created = new(handleId, adapterName, value, currentSurface, identityKey);
+        created.Update(value, adapterName, currentSurface, resolvedInterfaces, identityKey);
+        _handles[handleId] = created;
+        if (identityKey is not null)
+        {
+            _handleIdsByIdentity[identityKey] = handleId;
+        }
+
+        return created;
     }
 
-    protected bool RemoveHandle(string handleId) => _handles.Remove(handleId);
+    protected bool RemoveHandle(string handleId)
+    {
+        if (!_handles.Remove(handleId, out ComHandleInfo? removed))
+        {
+            return false;
+        }
+
+        if (removed.IdentityKey is not null)
+        {
+            _handleIdsByIdentity.Remove(removed.IdentityKey);
+        }
+
+        return true;
+    }
 
     protected object ResolveRegisteredHandle(string handleId, string adapterDisplayName)
     {
-        if (!_handles.TryGetValue(handleId, out object? handle))
+        return ResolveRegisteredHandleInfo(handleId, adapterDisplayName).ResolveCurrentValue();
+    }
+
+    protected ComHandleInfo ResolveRegisteredHandleInfo(string handleId, string adapterDisplayName)
+    {
+        if (!_handles.TryGetValue(handleId, out ComHandleInfo? handle))
         {
             throw new InvalidOperationException($"{adapterDisplayName} COM handle '{handleId}' was not found.");
         }
 
         return handle;
+    }
+
+    protected ComHandleInfo? FindHandleInfo(object value)
+    {
+        string? identityKey = TryGetObjectIdentityKey(value);
+        if (identityKey is null ||
+            !_handleIdsByIdentity.TryGetValue(identityKey, out string? handleId) ||
+            !_handles.TryGetValue(handleId, out ComHandleInfo? handle))
+        {
+            return null;
+        }
+
+        return handle;
+    }
+
+    protected static string? TryGetObjectIdentityKey(object value)
+    {
+        if (Marshal.IsComObject(value) || value.GetType().IsCOMObject)
+        {
+            IntPtr unknown = IntPtr.Zero;
+            try
+            {
+                unknown = Marshal.GetIUnknownForObject(value);
+                return $"com:{unknown.ToString("X", CultureInfo.InvariantCulture)}";
+            }
+            catch
+            {
+                return null;
+            }
+            finally
+            {
+                if (unknown != IntPtr.Zero)
+                {
+                    _ = Marshal.Release(unknown);
+                }
+            }
+        }
+
+        return $"obj:{RuntimeHelpers.GetHashCode(value).ToString(CultureInfo.InvariantCulture)}";
     }
 
     protected bool TryConvertGenericComObject(object value, out JsonNode? node)
@@ -248,6 +324,111 @@ public abstract class ComAutomationRuntimeBase
 }
 
 public sealed record ComApplicationBinding(object Application, string ProgId, bool ReusedExistingInstance);
+
+public sealed class ComHandleInfo
+{
+    private readonly Dictionary<string, object> _resolvedValues = new(StringComparer.OrdinalIgnoreCase);
+
+    public ComHandleInfo(string handleId, string adapterName, object rawValue, string? currentSurface, string? identityKey)
+    {
+        HandleId = handleId;
+        AdapterName = adapterName;
+        RawValue = rawValue;
+        RuntimeType = rawValue.GetType().FullName ?? rawValue.GetType().Name;
+        CurrentSurface = currentSurface;
+        IdentityKey = identityKey;
+        if (!string.IsNullOrWhiteSpace(currentSurface))
+        {
+            ResolvedInterfaces.Add(currentSurface);
+            _resolvedValues[currentSurface] = rawValue;
+        }
+    }
+
+    public string HandleId { get; }
+
+    public string AdapterName { get; private set; }
+
+    public string RuntimeType { get; private set; }
+
+    public object RawValue { get; private set; }
+
+    public string? CurrentSurface { get; private set; }
+
+    public string? IdentityKey { get; private set; }
+
+    public HashSet<string> ResolvedInterfaces { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public void Update(
+        object rawValue,
+        string adapterName,
+        string? currentSurface,
+        IEnumerable<string>? resolvedInterfaces,
+        string? identityKey)
+    {
+        RawValue = rawValue;
+        RuntimeType = rawValue.GetType().FullName ?? rawValue.GetType().Name;
+        if (!string.IsNullOrWhiteSpace(adapterName))
+        {
+            AdapterName = adapterName;
+        }
+
+        if (!string.IsNullOrWhiteSpace(currentSurface))
+        {
+            CurrentSurface = currentSurface;
+            ResolvedInterfaces.Add(currentSurface);
+            _resolvedValues[currentSurface] = rawValue;
+        }
+
+        if (resolvedInterfaces is not null)
+        {
+            foreach (string resolvedInterface in resolvedInterfaces.Where(value => !string.IsNullOrWhiteSpace(value)))
+            {
+                ResolvedInterfaces.Add(resolvedInterface);
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(identityKey))
+        {
+            IdentityKey = identityKey;
+        }
+    }
+
+    public void RememberSurfaceValue(string surfaceName, object value)
+    {
+        if (string.IsNullOrWhiteSpace(surfaceName))
+        {
+            return;
+        }
+
+        CurrentSurface = surfaceName;
+        _resolvedValues[surfaceName] = value;
+        ResolvedInterfaces.Add(surfaceName);
+        Update(value, AdapterName, surfaceName, null, IdentityKey);
+    }
+
+    public bool TryGetSurfaceValue(string surfaceName, out object? value)
+    {
+        if (_resolvedValues.TryGetValue(surfaceName, out object? resolved))
+        {
+            value = resolved;
+            return true;
+        }
+
+        value = null;
+        return false;
+    }
+
+    public object ResolveCurrentValue()
+    {
+        if (!string.IsNullOrWhiteSpace(CurrentSurface) &&
+            _resolvedValues.TryGetValue(CurrentSurface, out object? resolved))
+        {
+            return resolved;
+        }
+
+        return RawValue;
+    }
+}
 
 [SupportedOSPlatform("windows")]
 public sealed class StaOperationDispatcher : IDisposable

@@ -65,6 +65,8 @@ public sealed class SystemRuntime : IReflectiveInvokeRuntime, IPathArgumentNorma
 
     public ReportVerbosity GetDefaultReportVerbosity(JsonObject arguments) => ReportVerbosity.Full;
 
+    public object? AdaptValue(object? value) => value;
+
     public JsonNode? ConvertResult(object? value, InvokeDefinition definition, JsonObject arguments)
         => InvokeJsonNodeConverter.Convert(value);
 

@@ -135,6 +135,14 @@ public static class UtilityCli
         settings.CacheDirectory = ResolveConfiguredPath(settings.CacheDirectory, settings.ConfigPath);
         settings.ProfileDirectory = ResolveConfiguredPath(settings.ProfileDirectory, settings.ConfigPath);
         settings.DiagnosticsDirectory = ResolveConfiguredPath(settings.DiagnosticsDirectory, settings.ConfigPath);
+        foreach (ComInvokeDescriptor adapter in settings.ComAdapters)
+        {
+            adapter.InteropAssemblies = adapter.InteropAssemblies
+                .Where(path => !string.IsNullOrWhiteSpace(path))
+                .Select(path => ResolveConfiguredPath(path, settings.ConfigPath) ?? path)
+                .ToList();
+        }
+
         settings.LogFilePath = ResolveLogFilePath(settings);
         return settings;
     }

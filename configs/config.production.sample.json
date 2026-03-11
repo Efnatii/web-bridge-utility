@@ -16,7 +16,7 @@
     "ListenUrl": "http://127.0.0.1:38741"
   },
   "Ui": {
-    "Url": "https://efnatii.github.io/kompas3d-utility/",
+    "Url": "https://efnatii.github.io/web-bridge-utility/",
     "OpenMode": "Auto",
     "SessionWaitSeconds": 5
   },

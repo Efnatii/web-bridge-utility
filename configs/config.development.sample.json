@@ -384,6 +384,79 @@
             ]
           }
         },
+        "kompas.table.writeCell": {
+          "CommandId": "kompas.table.writeCell",
+          "Adapter": "kompas",
+          "Invoke": {
+            "Root": "application",
+            "Chain": [
+              { "Operation": "get", "Member": "ActiveDocument" },
+              { "Operation": "get", "Member": "ViewsAndLayersManager" },
+              { "Operation": "get", "Member": "Views" },
+              { "Operation": "get", "Member": "ActiveView" },
+              { "Operation": "cast", "Member": "ISymbols2DContainer" },
+              { "Operation": "get", "Member": "DrawingTables" },
+              {
+                "Operation": "call",
+                "Member": "Add",
+                "Args": [
+                  { "FromArgument": "rows", "Converter": "int" },
+                  { "FromArgument": "cols", "Converter": "int" }
+                ]
+              },
+              { "Operation": "cast", "Member": "ITable" },
+              {
+                "Operation": "index",
+                "Member": "",
+                "Args": [
+                  { "FromArgument": "row", "Converter": "int" },
+                  { "FromArgument": "col", "Converter": "int" }
+                ]
+              },
+              { "Operation": "get", "Member": "Text" },
+              { "Operation": "set", "Member": "Str", "ValueArgument": "value" }
+            ]
+          }
+        },
+        "kompas.document.saveActive": {
+          "CommandId": "kompas.document.saveActive",
+          "Adapter": "kompas",
+          "Invoke": {
+            "Root": "application",
+            "Chain": [
+              { "Operation": "get", "Member": "ActiveDocument" },
+              {
+                "Operation": "call",
+                "Member": "Save",
+                "Args": [
+                  { "FromArgument": "path", "Converter": "path" }
+                ]
+              }
+            ]
+          }
+        },
+        "kompas.table.load": {
+          "CommandId": "kompas.table.load",
+          "Adapter": "kompas",
+          "Invoke": {
+            "Root": "application",
+            "Chain": [
+              { "Operation": "get", "Member": "ActiveDocument" },
+              { "Operation": "get", "Member": "ViewsAndLayersManager" },
+              { "Operation": "get", "Member": "Views" },
+              { "Operation": "get", "Member": "ActiveView" },
+              { "Operation": "cast", "Member": "ISymbols2DContainer" },
+              { "Operation": "get", "Member": "DrawingTables" },
+              {
+                "Operation": "call",
+                "Member": "Load",
+                "Args": [
+                  { "FromArgument": "path", "Converter": "path" }
+                ]
+              }
+            ]
+          }
+        },
         "kompas.converter": {
           "CommandId": "kompas.converter",
           "Adapter": "kompas",
@@ -551,6 +624,66 @@
       "BusyRetryMaxAttempts": 8,
       "BusyRetryDelaysMs": [ 25, 50, 100, 150, 250, 400, 600, 800 ],
       "CompactReportDefault": false,
+      "InteropAssemblies": [
+        "C:\\Program Files\\ASCON\\KOMPAS-3D v24\\Bin\\Interop.KompasAPI7.dll"
+      ],
+      "Surfaces": [
+        {
+          "Name": "IApplication",
+          "ClrTypeName": "KompasAPI7.IApplication",
+          "Aliases": [ "application" ]
+        },
+        {
+          "Name": "IKompasDocument2D",
+          "ClrTypeName": "KompasAPI7.IKompasDocument2D",
+          "Aliases": [ "document2d" ]
+        },
+        {
+          "Name": "IViewsAndLayersManager",
+          "ClrTypeName": "KompasAPI7.IViewsAndLayersManager",
+          "Aliases": [ "viewsManager" ]
+        },
+        {
+          "Name": "IViews",
+          "ClrTypeName": "KompasAPI7.IViews",
+          "Aliases": [ "views" ]
+        },
+        {
+          "Name": "IView",
+          "ClrTypeName": "KompasAPI7.IView",
+          "Aliases": [ "view" ]
+        },
+        {
+          "Name": "ISymbols2DContainer",
+          "ClrTypeName": "KompasAPI7.ISymbols2DContainer",
+          "Aliases": [ "symbols2d" ]
+        },
+        {
+          "Name": "IDrawingTables",
+          "ClrTypeName": "KompasAPI7.IDrawingTables",
+          "Aliases": [ "drawingTables" ]
+        },
+        {
+          "Name": "IDrawingTable",
+          "ClrTypeName": "KompasAPI7.IDrawingTable",
+          "Aliases": [ "drawingTable" ]
+        },
+        {
+          "Name": "ITable",
+          "ClrTypeName": "KompasAPI7.ITable",
+          "Aliases": [ "table" ]
+        },
+        {
+          "Name": "ITableCell",
+          "ClrTypeName": "KompasAPI7.ITableCell",
+          "Aliases": [ "tableCell" ]
+        },
+        {
+          "Name": "IText",
+          "ClrTypeName": "KompasAPI7.IText",
+          "Aliases": [ "text" ]
+        }
+      ],
       "RealtimeAssignments": [
         { "Member": "Visible", "Value": true }
       ],
