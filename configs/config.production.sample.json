@@ -1,7 +1,7 @@
 {
   "Versions": {
-    "UtilityVersion": "1.0.0",
-    "ConfigVersion": "1.0.0-production-bootstrap",
+    "UtilityVersion": "1.0.1",
+    "ConfigVersion": "1.0.1-production-bootstrap",
     "ConfigSchemaVersion": 2
   },
   "Metadata": {

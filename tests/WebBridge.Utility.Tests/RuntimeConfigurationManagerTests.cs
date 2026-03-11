@@ -16,7 +16,7 @@ public sealed class RuntimeConfigurationManagerTests
             """
             {
               "Versions": {
-                "UtilityVersion": "1.0.0",
+                "UtilityVersion": "1.0.1",
                 "ConfigVersion": "nested-start",
                 "ConfigSchemaVersion": 2
               },
@@ -96,7 +96,7 @@ public sealed class RuntimeConfigurationManagerTests
             """
             {
               "Versions": {
-                "UtilityVersion": "1.0.0",
+                "UtilityVersion": "1.0.1",
                 "ConfigVersion": "reload-start",
                 "ConfigSchemaVersion": 2
               },
@@ -133,7 +133,7 @@ public sealed class RuntimeConfigurationManagerTests
             """
             {
               "Versions": {
-                "UtilityVersion": "1.0.0",
+                "UtilityVersion": "1.0.1",
                 "ConfigVersion": "reload-next",
                 "ConfigSchemaVersion": 2
               },

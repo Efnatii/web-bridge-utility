@@ -55,8 +55,8 @@ public sealed class ConfigCompatibilityTests
 
         UtilitySettings settings = UtilityCli.BuildEffectiveSettings(options, UtilityCli.BuildConfiguration(options));
 
-        Assert.Equal("1.0.0", settings.UtilityVersion);
-        Assert.Equal("1.0.0-production-bootstrap", settings.ConfigVersion);
+        Assert.Equal("1.0.1", settings.UtilityVersion);
+        Assert.Equal("1.0.1-production-bootstrap", settings.ConfigVersion);
         Assert.Equal(2, settings.ConfigSchemaVersion);
         Assert.Equal("Production", settings.EnvironmentName);
         Assert.Equal("http://127.0.0.1:38741", settings.ListenUrl);
@@ -78,7 +78,7 @@ public sealed class ConfigCompatibilityTests
 
         UtilitySettings settings = UtilityCli.BuildEffectiveSettings(options, UtilityCli.BuildConfiguration(options));
 
-        Assert.Equal("1.0.0-dev", settings.ConfigVersion);
+        Assert.Equal("1.0.1-dev", settings.ConfigVersion);
         Assert.Equal(2, settings.ConfigSchemaVersion);
         Assert.Equal("Development", settings.EnvironmentName);
         Assert.True(settings.DevMode);

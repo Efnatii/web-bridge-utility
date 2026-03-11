@@ -10,7 +10,7 @@ public static class ProtocolConstants
     public const string CorrelationIdHeader = "X-Correlation-Id";
     public const string SessionWebSocketPath = "/ws/session";
     public const string SessionRegisterPath = "/session/register";
-    public const string DefaultUtilityVersion = "1.0.0";
+    public const string DefaultUtilityVersion = "1.0.1";
     public const string DefaultListenUrl = "http://127.0.0.1:38741";
 }
 
@@ -218,7 +218,7 @@ public sealed class UtilitySettings
 public sealed class UtilityVersionsOptions
 {
     public string UtilityVersion { get; set; } = ProtocolConstants.DefaultUtilityVersion;
-    public string ConfigVersion { get; set; } = "1.0.0";
+    public string ConfigVersion { get; set; } = "1.0.1";
     public int ConfigSchemaVersion { get; set; } = 2;
 
     public UtilityVersionsOptions Clone()
@@ -509,8 +509,8 @@ public sealed class SystemSurfaceBinding
 public sealed class Manifest
 {
     public int ConfigSchemaVersion { get; set; } = 1;
-    public string ManifestVersion { get; set; } = "1.0.0";
-    public string MinUtilityVersion { get; set; } = "1.0.0";
+    public string ManifestVersion { get; set; } = "1.0.1";
+    public string MinUtilityVersion { get; set; } = "1.0.1";
     public string? RecommendedUtilityVersion { get; set; }
     public string? UiVersion { get; set; }
     public string? Checksum { get; set; }

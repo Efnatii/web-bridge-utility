@@ -281,8 +281,8 @@ dotnet publish src\WebBridge.Utility\WebBridge.Utility.csproj `
 POST /session/register
 {
   "clientName": "MyUi",
-  "clientVersion": "1.0.0",
-  "uiVersion": "1.0.0"
+  "clientVersion": "1.0.1",
+  "uiVersion": "1.0.1"
 }
 ```
 

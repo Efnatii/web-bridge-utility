@@ -1,7 +1,7 @@
 {
   "Versions": {
-    "UtilityVersion": "1.0.0",
-    "ConfigVersion": "1.0.0-dev",
+    "UtilityVersion": "1.0.1",
+    "ConfigVersion": "1.0.1-dev",
     "ConfigSchemaVersion": 2
   },
   "Metadata": {
@@ -38,9 +38,9 @@
   "Catalog": {
     "Manifest": {
       "ConfigSchemaVersion": 1,
-      "ManifestVersion": "1.0.0",
-      "MinUtilityVersion": "1.0.0",
-      "UiVersion": "1.0.0",
+      "ManifestVersion": "1.0.1",
+      "MinUtilityVersion": "1.0.1",
+      "UiVersion": "1.0.1",
       "Checksum": "embedded-development-manifest",
       "Profiles": [
         {

@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$RepoRoot = (Join-Path $PSScriptRoot ".."),
+    [string]$RepoRoot = "",
     [string]$Runtime = "win-x64",
     [string]$OutputRoot = "",
     [string]$DotnetExePath = "",
@@ -20,6 +20,10 @@ function Resolve-RepoRoot {
     }
 
     return (Resolve-Path -LiteralPath $Path).Path
+}
+
+if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
+    $RepoRoot = Join-Path $PSScriptRoot ".."
 }
 
 function Get-UtilityVersion {
@@ -97,7 +101,7 @@ function Publish-Utility {
         -p:PublishSingleFile=true `
         -p:SelfContained=true `
         -p:IncludeNativeLibrariesForSelfExtract=true `
-        -o $publishDir
+        -o $publishDir | Out-Host
 
     if ($LASTEXITCODE -ne 0) {
         throw "dotnet publish failed with exit code $LASTEXITCODE."
@@ -155,7 +159,12 @@ if (-not (Test-Path -LiteralPath $sourceBindBat -PathType Leaf)) {
 }
 
 $utilityVersion = Get-UtilityVersion -ConfigPath $sourceConfig
-$publishedExe = Resolve-PublishedExe -RepoRootPath $resolvedRepoRoot -RuntimeId $Runtime -DotnetPath $resolvedDotnetExe -SkipBuild:$SkipPublish
+$publishedExe = if ($SkipPublish) {
+    Resolve-PublishedExe -RepoRootPath $resolvedRepoRoot -RuntimeId $Runtime -DotnetPath $resolvedDotnetExe -SkipBuild
+}
+else {
+    Publish-Utility -RepoRootPath $resolvedRepoRoot -RuntimeId $Runtime -DotnetPath $resolvedDotnetExe
+}
 
 if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
     $OutputRoot = Join-Path $resolvedRepoRoot "artifacts\release"
