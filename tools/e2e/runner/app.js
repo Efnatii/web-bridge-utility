@@ -847,6 +847,24 @@ function extractResultField(result, fieldName) {
   return result?.result?.[fieldName] ?? result?.[fieldName] ?? null;
 }
 
+function extractResultNode(result) {
+  return result?.result ?? result ?? null;
+}
+
+function toStringArray(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter(item => item !== null && item !== undefined)
+    .map(item => String(item));
+}
+
+function arrayIncludesIgnoreCase(values, expected) {
+  return toStringArray(values).some(value => value.localeCompare(String(expected), undefined, { sensitivity: "accent" }) === 0);
+}
+
 function extractReportDuration(command) {
   return Number(command?.report?.durationMs ?? 0);
 }
@@ -1144,6 +1162,51 @@ function startReconnectLoop(client, intervalSeconds) {
       }
     }
   })();
+  return {
+    stop() {
+      control.stop = true;
+    },
+    promise,
+  };
+}
+
+async function ensureSessionConnected(client, reason = "recover") {
+  assert(client, "Session client is missing.");
+  const socketState = client.ws?.readyState ?? WebSocket.CLOSED;
+  if (client.registered && socketState === WebSocket.OPEN && client.helloReceived) {
+    return false;
+  }
+
+  const desiredSessionId = client.sessionId;
+  appendLog(`session-recovery:${client.name}`, `reason=${reason}; desiredSessionId=${desiredSessionId ?? "<new>"}; socketState=${socketState}; registered=${client.registered}; hello=${client.helloReceived}`);
+  try {
+    await client.dropSocket(`${reason}-reset`);
+  } catch {
+    // best effort reset before reconnect
+  }
+
+  client.registered = false;
+  await client.connect(desiredSessionId);
+  return true;
+}
+
+function startSessionRecoveryLoop(client, intervalSeconds, reason = "session-recovery") {
+  const control = { stop: false };
+  const promise = (async () => {
+    while (!control.stop) {
+      await sleep(intervalSeconds * 1000);
+      if (control.stop) {
+        break;
+      }
+
+      try {
+        await ensureSessionConnected(client, reason);
+      } catch (error) {
+        appendLog(`${reason}:${client.name}-failed`, formatError(error));
+      }
+    }
+  })();
+
   return {
     stop() {
       control.stop = true;
@@ -1939,6 +2002,29 @@ async function runExcelSuite(report) {
     return command.result;
   };
 
+  const refreshWorkbookHandle = async (reason = "refresh") => {
+    const command = await excelCommand("excel.application.active-workbook", {});
+    const nextHandle = extractHandleId(command.result ?? command);
+    assert(Boolean(nextHandle), `ActiveWorkbook handleId is missing during ${reason}.`);
+    workbookHandle = nextHandle;
+    return workbookHandle;
+  };
+
+  const refreshWorksheetHandle = async (reason = "refresh") => {
+    if (!workbookHandle) {
+      await refreshWorkbookHandle(`${reason}:workbook`);
+    }
+
+    const command = await excelCommand("excel.workbook.sheet-by-name", {
+      handleId: workbookHandle,
+      sheetName: excel.sheetName,
+    });
+    const nextHandle = extractHandleId(command.result ?? command);
+    assert(Boolean(nextHandle), `Worksheet handleId is missing during ${reason}.`);
+    worksheetHandle = nextHandle;
+    return worksheetHandle;
+  };
+
   const bringExcelWindowToFront = async (hwnd, titleHint = "") => {
     const script = [
       `$hwnd = [intptr]${Number(hwnd)};`,
@@ -1987,6 +2073,25 @@ async function runExcelSuite(report) {
   });
 
   await runCheck(report, {
+    id: "excel-invalid-progid-structured-failure",
+    expected: "Excel COM adapter must return a structured unavailable error for a missing ProgID",
+    classification: "product defect",
+  }, async () => {
+    const failed = await executeCommand("excel.application", {
+      refresh: true,
+      progId: "KWB.Missing.Excel.ProgId",
+      createIfMissing: true,
+    }, {
+      expectFailure: true,
+      reportVerbosity: "compact",
+      timeoutMilliseconds: 10000,
+    });
+    const error = failed.payload?.error ?? {};
+    assert(String(error.code ?? "") === "adapter_unavailable", `Expected adapter_unavailable, got ${JSON.stringify(error)}`);
+    return { actual: `${error.code}: ${error.message ?? ""}`.trim() };
+  });
+
+  await runCheck(report, {
     id: "excel-set-visible",
     expected: "Excel окно должно стать видимым",
   }, async () => {
@@ -2004,6 +2109,46 @@ async function runExcelSuite(report) {
     workbookHandle = extractHandleId(command.result ?? command);
     assert(Boolean(workbookHandle), "Workbook handleId is missing.");
     return { actual: `workbookHandle=${workbookHandle}` };
+  });
+
+  await runCheck(report, {
+    id: "excel-shared-context-last-handle",
+    expected: "Excel handle-root must resolve the last workbook from shared context without an explicit handleId",
+    classification: "product defect",
+  }, async () => {
+    const command = await excelCommand("excel.workbook.get-name", { contextHandle: "last" });
+    const workbookName = String(command.result ?? "");
+    assert(Boolean(workbookName), "Workbook name from shared context is empty.");
+    return { actual: workbookName };
+  });
+
+  await runCheck(report, {
+    id: "excel-report-compact-vs-full",
+    expected: "Excel invoke report must distinguish compact and full verbosity without changing the workbook handle",
+    classification: "product defect",
+  }, async () => {
+    const compact = await executeCommand("excel.application.active-workbook", {}, {
+      sharedContextId: excelSharedContext,
+      reportVerbosity: "compact",
+      timeoutMilliseconds: 30000,
+    });
+    const full = await executeCommand("excel.application.active-workbook", {}, {
+      sharedContextId: excelSharedContext,
+      reportVerbosity: "full",
+      timeoutMilliseconds: 30000,
+    });
+    const compactHandle = extractHandleId(compact.result ?? compact);
+    const fullHandle = extractHandleId(full.result ?? full);
+    assert(Boolean(compactHandle) && Boolean(fullHandle), "ActiveWorkbook handle is missing in compact/full report check.");
+    assert(compactHandle === fullHandle, `Expected same workbook handle, got compact=${compactHandle}, full=${fullHandle}`);
+    assert(String(compact.report?.reportVerbosity ?? "") === "Compact", `Unexpected compact reportVerbosity ${compact.report?.reportVerbosity}`);
+    assert(String(full.report?.reportVerbosity ?? "") === "Full", `Unexpected full reportVerbosity ${full.report?.reportVerbosity}`);
+    assert(!("arguments" in (compact.report ?? {})) && Array.isArray(compact.report?.argumentKeys), "Compact report shape is invalid.");
+    assert(Boolean(full.report?.arguments) && Array.isArray(full.report?.steps), "Full report shape is invalid.");
+    return {
+      actual: `handle=${compactHandle}`,
+      details: `compactKeys=${(compact.report?.argumentKeys ?? []).length}; fullSteps=${(full.report?.steps ?? []).length}`,
+    };
   });
 
   await runCheck(report, {
@@ -2042,6 +2187,7 @@ async function runExcelSuite(report) {
   });
 
   const rangeHandle = async address => {
+    await refreshWorksheetHandle(`range:${address}`);
     const command = await excelCommand("excel.worksheet.range", { handleId: worksheetHandle, address });
     const handleId = extractHandleId(command.result ?? command);
     assert(Boolean(handleId), `Range handleId is missing for ${address}.`);
@@ -2060,10 +2206,11 @@ async function runExcelSuite(report) {
     const workbookName = String(await readExcelResult("excel.workbook.get-name", { handleId: workbookHandle }));
     await excelCommand("excel.range.set-value", { handleId, value: "VISUAL SMOKE" });
     await excelCommand("excel.range.font-bold", { handleId, value: true });
-    await excelCommand("excel.range.font-size", { handleId, value: 24 });
+   await excelCommand("excel.range.font-size", { handleId, value: 24 });
     await excelCommand("excel.range.fill-color", { handleId, color: 65535 });
     await bringExcelWindowToFront(Number(await readExcelResult("excel.application.get-hwnd", {})), workbookName);
     await sleep(excel.visualPauseMs ?? 1200);
+    await refreshWorksheetHandle("after-visual-smoke");
     return { actual: `screenUpdating=${screenUpdating}, pauseMs=${excel.visualPauseMs ?? 1200}` };
   });
 
@@ -2181,8 +2328,8 @@ async function runExcelSuite(report) {
       expected: "Merge должен объединить E1:F1",
       action: async () => {
         const handleId = await rangeHandle("E1:F1");
-        await excelCommand("excel.range.set-value", { handleId, value: "Merged Title" });
         await excelCommand("excel.range.merge", { handleId });
+        await excelCommand("excel.range.set-value", { handleId, value: "Merged Title" });
         const actual = await readExcelResult("excel.range.get-merge-cells", { handleId });
         assertExcelBoolean(actual, true, "MergeCells");
         return { actual: "Merged E1:F1" };
@@ -2470,6 +2617,7 @@ async function runExcelSuite(report) {
       id: "excel-op-36-activate-worksheet",
       expected: "Worksheet.Activate должен менять ActiveSheet",
       action: async () => {
+        await refreshWorksheetHandle("activate-worksheet");
         await excelCommand("excel.worksheet.activate", { handleId: worksheetHandle });
         const actual = await readExcelResult("excel.application.active-sheet-name", {});
         assert(String(actual) === excel.sheetName, `Unexpected active sheet ${actual}`);
@@ -2480,6 +2628,7 @@ async function runExcelSuite(report) {
       id: "excel-op-37-tab-color",
       expected: "Цвет вкладки листа должен устанавливаться и читаться обратно",
       action: async () => {
+        await refreshWorksheetHandle("tab-color");
         await excelCommand("excel.worksheet.set-tab-color", { handleId: worksheetHandle, color: 255 });
         const actual = Number(await readExcelResult("excel.worksheet.get-tab-color", { handleId: worksheetHandle }));
         assert(actual === 255, `Unexpected tab color ${actual}`);
@@ -2510,6 +2659,7 @@ async function runExcelSuite(report) {
       id: "excel-op-40-worksheet-count",
       expected: "Workbook должен показывать корректное количество листов",
       action: async () => {
+        await refreshWorkbookHandle("worksheet-count");
         const actual = Number(await readExcelResult("excel.workbook.worksheet-count", { handleId: workbookHandle }));
         assert(actual >= 2, `Expected worksheet count >= 2, got ${actual}`);
         return { actual: `worksheetCount=${actual}` };
@@ -2519,6 +2669,7 @@ async function runExcelSuite(report) {
       id: "excel-op-41-used-range-address",
       expected: "UsedRange.Address должен отражать заполненный диапазон",
       action: async () => {
+        await refreshWorksheetHandle("used-range");
         const actual = await readExcelResult("excel.worksheet.used-range-address", { handleId: worksheetHandle });
         const normalized = String(actual).replace(/\$/g, "").toUpperCase();
         assert(normalized.startsWith("A1:"), `Unexpected UsedRange ${actual}`);
@@ -2539,6 +2690,7 @@ async function runExcelSuite(report) {
       id: "excel-op-43-save-as",
       expected: "Workbook.SaveAs должен сохранить временный файл и файл должен реально существовать",
       action: async () => {
+        await refreshWorkbookHandle("save-as");
         await excelCommand("excel.workbook.save-as", { handleId: workbookHandle, path: excel.workbookPath });
         const info = await executeCommand("system.file.info", { path: excel.workbookPath });
         assert(extractResultField(info, "Exists") === true, "Saved workbook file does not exist.");
@@ -2549,6 +2701,7 @@ async function runExcelSuite(report) {
       id: "excel-op-44-workbook-name",
       expected: "Workbook.Name должен соответствовать сохранённому имени файла",
       action: async () => {
+        await refreshWorkbookHandle("workbook-name");
         const actual = await readExcelResult("excel.workbook.get-name", { handleId: workbookHandle });
         const expectedName = String(excel.workbookPath).split(/[/\\]/).pop();
         assert(String(actual).toLowerCase() === String(expectedName).toLowerCase(), `Unexpected workbook name ${actual}`);
@@ -2559,6 +2712,7 @@ async function runExcelSuite(report) {
       id: "excel-op-45-workbook-full-name",
       expected: "Workbook.FullName должен указывать на сохранённый путь",
       action: async () => {
+        await refreshWorkbookHandle("workbook-full-name");
         const actual = await readExcelResult("excel.workbook.get-full-name", { handleId: workbookHandle });
         assert(pathEquals(actual, excel.workbookPath), `Unexpected workbook full name ${actual}`);
         return { actual: String(actual) };
@@ -2568,6 +2722,7 @@ async function runExcelSuite(report) {
       id: "excel-op-46-workbook-saved",
       expected: "Workbook.Saved должен быть true после сохранения",
       action: async () => {
+        await refreshWorkbookHandle("workbook-saved");
         const actual = await readExcelResult("excel.workbook.get-saved", { handleId: workbookHandle });
         assertExcelBoolean(actual, true, "Workbook.Saved");
         return { actual: "saved=true" };
@@ -2577,6 +2732,7 @@ async function runExcelSuite(report) {
       id: "excel-op-47-worksheet-name-readback",
       expected: "Worksheet.Name должен читаться обратно после rename",
       action: async () => {
+        await refreshWorksheetHandle("worksheet-name-readback");
         const actual = await readExcelResult("excel.worksheet.get-name", { handleId: worksheetHandle });
         assert(String(actual) === excel.sheetName, `Unexpected worksheet name ${actual}`);
         return { actual: String(actual) };
@@ -2611,6 +2767,7 @@ async function runExcelSuite(report) {
       id: "excel-op-50-close-workbook",
       expected: "Workbook.Close должен завершиться без ошибки",
       action: async () => {
+        await refreshWorkbookHandle("close-workbook");
         await excelCommand("excel.workbook.close", { handleId: workbookHandle });
         return { actual: "Workbook closed" };
       },
@@ -2651,6 +2808,7 @@ async function runKompasSuite(report) {
   setStatus("Main suite: KOMPAS total");
 
   const kompas = state.scenario.kompas;
+  const kompasMainSharedContext = `kompas-main-${Date.now()}`;
   if (!kompas.hasSample) {
     recordResult(report, {
       id: "kompas-environment-sample",
@@ -2775,15 +2933,12 @@ async function runKompasSuite(report) {
     return exists;
   };
 
-  await runCheck(report, {
-    id: "kompas-document-visible-open",
-    expected: "KOMPAS должен открыть именно временную копию sample-чертежа как ActiveDocument в видимом UI",
-  }, async () => {
+  const openVisibleKompasDocument = async targetPath => {
     const attempts = [];
     const tryOpen = async (mode, action) => {
       try {
         await action();
-        const active = await waitForActiveKompasDocument(kompas.sampleCopyPath);
+        const active = await waitForActiveKompasDocument(targetPath);
         return { mode, active };
       } catch (error) {
         attempts.push({ mode, reason: formatError(error) });
@@ -2793,7 +2948,7 @@ async function runKompasSuite(report) {
 
     let opened = await tryOpen("api7.OpenDocument", async () => {
       await executeCommand("kompas.api7.application.open-document", {
-        path: kompas.sampleCopyPath,
+        path: targetPath,
         refresh: true,
         createIfMissing: true,
         visible: true,
@@ -2803,9 +2958,9 @@ async function runKompasSuite(report) {
     if (!opened) {
       opened = await tryOpen("system.shell-open", async () => {
         await executeCommand("system.process.start", {
-          fileName: kompas.sampleCopyPath,
+          fileName: targetPath,
           arguments: "",
-          workingDirectory: kompas.sampleDirectory,
+          workingDirectory: String(targetPath).replace(/[\\/][^\\/]+$/, ""),
           shellExecute: true,
           createNoWindow: false,
           waitForExit: false,
@@ -2821,7 +2976,7 @@ async function runKompasSuite(report) {
       opened = await tryOpen("api5.Document2D.ksOpenDocument", async () => {
         await executeCommand("kompas.api5.document2d.open", {
           handleId: fallbackHandle,
-          path: kompas.sampleCopyPath,
+          path: targetPath,
           visible: true,
         });
       });
@@ -2829,12 +2984,50 @@ async function runKompasSuite(report) {
 
     assert(
       Boolean(opened),
-      `KOMPAS did not visibly open the sample drawing.\n${attempts.map(item => `${item.mode}: ${item.reason}`).join("\n")}`);
+      `KOMPAS did not visibly open the target drawing.\n${attempts.map(item => `${item.mode}: ${item.reason}`).join("\n")}`);
+    return {
+      mode: opened.mode,
+      active: opened.active,
+      attempts,
+    };
+  };
+
+  const bindActiveKompasDocument = async (expectedPath, reason) => {
+    let active;
+    if (expectedPath) {
+      active = await waitForActiveKompasDocument(expectedPath);
+    } else {
+      await waitForCondition(async () => {
+        try {
+          const current = await readActiveKompasDocument();
+          return Boolean(current.handleId);
+        } catch {
+          return false;
+        }
+      }, 20000, "KOMPAS active document handle did not appear after reload.");
+      active = await readActiveKompasDocument();
+    }
+
+    api7DocumentHandle = active.handleId;
+    assert(Boolean(api7DocumentHandle), "API7 active document handle is missing.");
+
+    const documentCommand = await executeCommand("kompas.api5.active-document2d", { handleId: api5ApplicationHandle });
+    doc2dHandle = extractHandleId(documentCommand.result ?? documentCommand);
+    assert(Boolean(doc2dHandle), "Document2D handle is missing.");
+    const refresh = await refreshKompasViewport(reason);
+    return { active, refresh };
+  };
+
+  await runCheck(report, {
+    id: "kompas-document-visible-open",
+    expected: "KOMPAS должен открыть именно временную копию sample-чертежа как ActiveDocument в видимом UI",
+  }, async () => {
+    const opened = await openVisibleKompasDocument(kompas.sampleCopyPath);
     return {
       actual: `mode=${opened.mode}, activeDocument=${opened.active.path}, api7DocumentHandle=${opened.active.handleId}`,
-      details: attempts.length === 0
+      details: opened.attempts.length === 0
         ? ""
-        : `fallbackAttempts=${attempts.map(item => item.mode).join(", ")}`,
+        : `fallbackAttempts=${opened.attempts.map(item => item.mode).join(", ")}`,
     };
   });
 
@@ -2842,13 +3035,56 @@ async function runKompasSuite(report) {
     id: "kompas-document2d-handle",
     expected: "API5 Document2D handle должен получаться уже после визуального открытия документа",
   }, async () => {
-    const documentCommand = await executeCommand("kompas.api5.active-document2d", { handleId: api5ApplicationHandle });
-    doc2dHandle = extractHandleId(documentCommand.result ?? documentCommand);
-    assert(Boolean(doc2dHandle), "Document2D handle is missing.");
-    const active = await readActiveKompasDocument();
-    assert(pathEquals(active.path, kompas.sampleCopyPath), `ActiveDocument path changed unexpectedly: ${active.path ?? "<null>"}`);
-    const refresh = await refreshKompasViewport("after-document-open");
+    const { active, refresh } = await bindActiveKompasDocument(kompas.sampleCopyPath, "after-document-open");
     return { actual: `doc2dHandle=${doc2dHandle}, activeDocument=${active.path}`, details: refresh };
+  });
+
+  await runCheck(report, {
+    id: "kompas-shared-context-last-handle",
+    expected: "KOMPAS handle-root must resolve ActiveDocument2D from shared context without an explicit handleId",
+    classification: "product defect",
+  }, async () => {
+    const seed = await executeCommand("kompas.api5.active-document2d", { handleId: api5ApplicationHandle }, {
+      sharedContextId: kompasMainSharedContext,
+      reportVerbosity: "compact",
+      timeoutMilliseconds: 30000,
+    });
+    const seededHandle = extractHandleId(seed.result ?? seed);
+    assert(Boolean(seededHandle), "Shared-context seed handle for KOMPAS is missing.");
+    const zoom = await executeCommand("kompas.api5.zoom-all", { contextHandle: "last", mode: 5 }, {
+      sharedContextId: kompasMainSharedContext,
+      reportVerbosity: "compact",
+      timeoutMilliseconds: 10000,
+    });
+    assert(Number(zoom.result) >= 0, `Unexpected zoom-all result ${zoom.result}`);
+    return { actual: `handle=${seededHandle}, zoom=${zoom.result}` };
+  });
+
+  await runCheck(report, {
+    id: "kompas-report-compact-vs-full",
+    expected: "KOMPAS invoke report must distinguish compact and full verbosity without changing the document handle",
+    classification: "product defect",
+  }, async () => {
+    const compact = await executeCommand("kompas.api5.active-document2d", { handleId: api5ApplicationHandle }, {
+      reportVerbosity: "compact",
+      timeoutMilliseconds: 30000,
+    });
+    const full = await executeCommand("kompas.api5.active-document2d", { handleId: api5ApplicationHandle }, {
+      reportVerbosity: "full",
+      timeoutMilliseconds: 30000,
+    });
+    const compactHandle = extractHandleId(compact.result ?? compact);
+    const fullHandle = extractHandleId(full.result ?? full);
+    assert(Boolean(compactHandle) && Boolean(fullHandle), "KOMPAS active-document2d handle is missing.");
+    assert(compactHandle === fullHandle, `Expected same doc handle, got compact=${compactHandle}, full=${fullHandle}`);
+    assert(String(compact.report?.reportVerbosity ?? "") === "Compact", `Unexpected compact reportVerbosity ${compact.report?.reportVerbosity}`);
+    assert(String(full.report?.reportVerbosity ?? "") === "Full", `Unexpected full reportVerbosity ${full.report?.reportVerbosity}`);
+    assert(!("arguments" in (compact.report ?? {})) && Array.isArray(compact.report?.argumentKeys), "Compact KOMPAS report shape is invalid.");
+    assert(Boolean(full.report?.arguments) && Array.isArray(full.report?.steps), "Full KOMPAS report shape is invalid.");
+    return {
+      actual: `handle=${compactHandle}`,
+      details: `compactKeys=${(compact.report?.argumentKeys ?? []).length}; fullSteps=${(full.report?.steps ?? []).length}`,
+    };
   });
 
   const getParamHandle = async structType => {
@@ -2859,6 +3095,266 @@ async function runKompasSuite(report) {
     assert(Boolean(handleId), `Param handle for struct ${structType} is missing.`);
     return handleId;
   };
+
+  const dslApplicationArgs = { refresh: true, createIfMissing: true, visible: true };
+  const recordKompasEnvironmentIssue = (id, expected, actual, details = "") => {
+    recordResult(report, {
+      id,
+      title: id,
+      success: false,
+      expected,
+      actual,
+      classification: "environment issue",
+      severity: "medium",
+      details,
+    });
+  };
+  const readKompasMetadata = (command, label) => {
+    const node = extractResultNode(command);
+    assert(node && typeof node === "object" && !Array.isArray(node), `${label} did not return metadata.`);
+    return node;
+  };
+  const assertKompasSurface = (command, expectedSurface, label) => {
+    const node = readKompasMetadata(command, label);
+    assert(String(node.surface ?? "") === expectedSurface, `${label} expected surface ${expectedSurface}, got ${node.surface ?? "<null>"}`);
+    return node;
+  };
+  const refreshKompasHandlesAfterReload = async () => {
+    const reboundApi5 = await executeCommand("kompas.api5.application", dslApplicationArgs);
+    api5ApplicationHandle = extractHandleId(reboundApi5.result ?? reboundApi5);
+    assert(Boolean(api5ApplicationHandle), "API5 application handle is missing after config reload.");
+
+    const reboundApi7 = await executeCommand("kompas.api7.application", dslApplicationArgs);
+    api7ApplicationHandle = extractHandleId(reboundApi7.result ?? reboundApi7);
+    assert(Boolean(api7ApplicationHandle), "API7 application handle is missing after config reload.");
+
+    const { active, refresh } = await bindActiveKompasDocument(null, "after-dsl-config-reload");
+    return {
+      api5ApplicationHandle,
+      api7ApplicationHandle,
+      api7DocumentHandle,
+      doc2dHandle,
+      refresh,
+    };
+  };
+
+  if (!kompas.interopAssemblyPath) {
+    recordKompasEnvironmentIssue(
+      "kompas-dsl-environment-interop",
+      "Для COM runtime DSL нужен доступный Interop.KompasAPI7.dll.",
+      `Interop.KompasAPI7.dll was not found. Candidates: ${(kompas.interopAssemblyCandidates ?? []).join(" | ")}`,
+      "DSL-only cast/queryInterface checks were skipped.");
+  } else {
+    await checkpoint("06-kompas-dsl", { interopAssemblyPath: kompas.interopAssemblyPath });
+
+    let activeViewHandle = null;
+
+    await runCheck(report, {
+      id: "kompas-dsl-active-view-metadata",
+      expected: "ActiveView через DSL должен вернуть metadata для surface IView с доступным cast в ISymbols2DContainer",
+      classification: "product defect",
+    }, async () => {
+      const command = await executeCommand("kompas.dsl.activeView", dslApplicationArgs);
+      const node = assertKompasSurface(command, "IView", "kompas.dsl.activeView");
+      activeViewHandle = extractHandleId(command.result ?? command);
+      assert(Boolean(activeViewHandle), "ActiveView handle is missing.");
+      assert(arrayIncludesIgnoreCase(node.memberNames, "Name"), "IView metadata does not include Name.");
+      assert(arrayIncludesIgnoreCase(node.possibleCasts, "ISymbols2DContainer"), "IView metadata does not include ISymbols2DContainer in possibleCasts.");
+      return {
+        actual: `handleId=${activeViewHandle}, surface=${node.surface}`,
+        details: `memberNames=${toStringArray(node.memberNames).join(", ")}; possibleCasts=${toStringArray(node.possibleCasts).join(", ")}`,
+      };
+    });
+
+    await runCheck(report, {
+      id: "kompas-dsl-query-symbols",
+      expected: "queryInterface по alias symbols2d должен вернуть surface ISymbols2DContainer с доступным DrawingTables",
+      classification: "product defect",
+    }, async () => {
+      const command = await executeCommand("kompas.dsl.activeView.querySymbols", dslApplicationArgs);
+      const node = assertKompasSurface(command, "ISymbols2DContainer", "kompas.dsl.activeView.querySymbols");
+      assert(arrayIncludesIgnoreCase(node.memberNames, "DrawingTables"), "ISymbols2DContainer metadata does not include DrawingTables.");
+      return {
+        actual: `surface=${node.surface}`,
+        details: `memberNames=${toStringArray(node.memberNames).join(", ")}`,
+      };
+    });
+
+    await runCheck(report, {
+      id: "kompas-dsl-trycast-null",
+      expected: "tryCast к ITable на ActiveView должен вернуть null, если surface недоступен",
+      classification: "product defect",
+    }, async () => {
+      const command = await executeCommand("kompas.dsl.activeView.tryCastTable", dslApplicationArgs);
+      assert(command.result === null, `Expected null result, got ${JSON.stringify(command.result)}`);
+      return { actual: "null" };
+    });
+
+    await runCheck(report, {
+      id: "kompas-dsl-recast-existing-handle",
+      expected: "Повторный cast по уже выданному handleId должен вернуть ISymbols2DContainer и накопить resolvedInterfaces",
+      classification: "product defect",
+    }, async () => {
+      assert(Boolean(activeViewHandle), "ActiveView handle is missing for recast.");
+      const command = await executeCommand("kompas.dsl.handle.castSymbols", { handleId: activeViewHandle });
+      const node = assertKompasSurface(command, "ISymbols2DContainer", "kompas.dsl.handle.castSymbols");
+      assert(arrayIncludesIgnoreCase(node.resolvedInterfaces, "IView"), "resolvedInterfaces does not include IView.");
+      assert(arrayIncludesIgnoreCase(node.resolvedInterfaces, "ISymbols2DContainer"), "resolvedInterfaces does not include ISymbols2DContainer.");
+      return {
+        actual: `surface=${node.surface}`,
+        details: `resolvedInterfaces=${toStringArray(node.resolvedInterfaces).join(", ")}`,
+      };
+    });
+
+    await runCheck(report, {
+      id: "kompas-dsl-table-write",
+      expected: "Pure DSL table flow должен дойти до IText и дать metadata с member Str",
+      classification: "product defect",
+    }, async () => {
+      const command = await executeCommand("kompas.table.writeCell", {
+        ...dslApplicationArgs,
+        rows: 2,
+        cols: 2,
+        row: 1,
+        col: 1,
+        value: "KWB DSL",
+      });
+      const node = assertKompasSurface(command, "IText", "kompas.table.writeCell");
+      assert(arrayIncludesIgnoreCase(node.memberNames, "Str"), "IText metadata does not include Str.");
+      const refresh = await refreshKompasViewport("kompas-dsl-table-write");
+      await sleep(1200);
+      return {
+        actual: `surface=${node.surface}`,
+        details: `memberNames=${toStringArray(node.memberNames).join(", ")}; ${refresh}`,
+      };
+    });
+
+    await checkpoint("06-kompas-dsl-table", { dslSaveCopyPath: kompas.dslSaveCopyPath });
+
+    await runCheck(report, {
+      id: "kompas-dsl-save-active",
+      expected: "kompas.document.saveActive должен создать непустую копию активного документа",
+      classification: "product defect",
+    }, async () => {
+      await executeCommand("kompas.document.saveActive", {
+        ...dslApplicationArgs,
+        path: kompas.dslSaveCopyPath,
+      });
+      const info = await executeCommand("system.file.info", { path: kompas.dslSaveCopyPath });
+      const exists = extractResultField(info, "Exists");
+      const length = Number(extractResultField(info, "Length"));
+      assert(exists === true, "DSL save copy file was not created.");
+      assert(Number.isFinite(length) && length > 0, `DSL save copy file is empty: ${length}`);
+      return { actual: `${kompas.dslSaveCopyPath} (${length} bytes)` };
+    });
+
+    if (!kompas.tableTemplatePath) {
+      recordKompasEnvironmentIssue(
+        "kompas-dsl-environment-table-template",
+        "Для проверки DrawingTables.Load нужен доступный sample .tbl файл.",
+        `Table template was not found. Candidates: ${(kompas.tableTemplateCandidates ?? []).join(" | ")}`,
+        "DSL table-load checks were skipped.");
+    } else {
+      await runCheck(report, {
+        id: "kompas-dsl-table-load",
+        expected: "kompas.table.load должен вернуть IDrawingTable с возможным cast в ITable",
+        classification: "product defect",
+      }, async () => {
+        const loadCommand = await executeCommand("kompas.table.load", {
+          ...dslApplicationArgs,
+          path: kompas.tableTemplatePath,
+        }, {
+          timeoutMilliseconds: 30000,
+        });
+        const loadNode = assertKompasSurface(loadCommand, "IDrawingTable", "kompas.table.load");
+        const tableHandleId = extractHandleId(loadCommand.result ?? loadCommand);
+        assert(Boolean(tableHandleId), "DrawingTable handle is missing after table load.");
+        assert(arrayIncludesIgnoreCase(loadNode.possibleCasts, "ITable"), "IDrawingTable metadata does not include ITable in possibleCasts.");
+
+        const castCommand = await executeCommand("kompas.dsl.handle.castTable", { handleId: tableHandleId });
+        const castNode = assertKompasSurface(castCommand, "ITable", "kompas.dsl.handle.castTable");
+        return {
+          actual: `loadSurface=${loadNode.surface}, castSurface=${castNode.surface}`,
+          details: `tableHandleId=${tableHandleId}; possibleCasts=${toStringArray(loadNode.possibleCasts).join(", ")}`,
+        };
+      });
+    }
+
+    await runCheck(report, {
+      id: "kompas-dsl-hot-reload-command-plan",
+      expected: "Config hot reload должен обновить alias surfaces и инвалидировать compiled command plans без рестарта",
+      classification: "product defect",
+    }, async () => {
+      const baseline = await executeCommand("kompas.dsl.hotReloadCast", dslApplicationArgs);
+      assertKompasSurface(baseline, "ISymbols2DContainer", "kompas.dsl.hotReloadCast baseline");
+
+      const effective = await getEffectiveConfig();
+      const next = deepClone(effective);
+      next.versions = next.versions ?? {};
+      next.ui = next.ui ?? {};
+      next.security = next.security ?? {};
+      next.catalog = next.catalog ?? {};
+      next.adapters = next.adapters ?? {};
+      next.versions.configVersion = `e2e-kompas-dsl-${Date.now()}`;
+      next.ui.url = state.scenario.hostBaseUrl;
+      next.security.pairingToken = state.scenario.pairingToken;
+
+      const profile = (next.catalog.profiles ?? []).find(item => String(item.profileId) === state.scenario.profileId);
+      assert(profile, `Profile ${state.scenario.profileId} was not found in effective config.`);
+      const hotReloadCommand = profile.commands?.["kompas.dsl.hotReloadCast"];
+      assert(hotReloadCommand, "kompas.dsl.hotReloadCast command is missing in effective config.");
+      const hotReloadStep = [...(hotReloadCommand.invoke?.chain ?? [])]
+        .reverse()
+        .find(step => String(step?.operation ?? "").toLowerCase() === "cast");
+      assert(hotReloadStep, "Cast step for kompas.dsl.hotReloadCast was not found.");
+      hotReloadStep.member = "symbols2dReloaded";
+
+      const kompasAdapter = (next.adapters.com ?? []).find(item => String(item.adapterName ?? "").toLowerCase() === "kompas");
+      assert(kompasAdapter, "KOMPAS adapter is missing in effective config.");
+      if (kompas.interopAssemblyPath) {
+        kompasAdapter.interopAssemblies = [kompas.interopAssemblyPath];
+      }
+      const symbolsSurface = (kompasAdapter.surfaces ?? []).find(surface => String(surface?.name ?? "") === "ISymbols2DContainer");
+      assert(symbolsSurface, "ISymbols2DContainer surface is missing in effective config.");
+      symbolsSurface.aliases = [
+        ...(symbolsSurface.aliases ?? []).filter(alias => !["symbols2d", "symbols2dReloaded"].includes(String(alias))),
+        "symbols2dReloaded",
+      ];
+
+      const applied = await postConfigLoad(next, false);
+      assert(applied.response.ok, `/config/load status ${applied.response.status}`);
+      assert(applied.payload.applied === true, "Config load was not applied.");
+      const afterLoadVersion = await getConfigVersion();
+      assert(afterLoadVersion.configVersion === next.versions.configVersion, `Unexpected configVersion ${afterLoadVersion.configVersion}`);
+
+      const afterLoad = await executeCommand("kompas.dsl.hotReloadCast", dslApplicationArgs);
+      assertKompasSurface(afterLoad, "ISymbols2DContainer", "kompas.dsl.hotReloadCast after load");
+
+      const reloaded = await postConfigReload();
+      assert(reloaded.response.ok, `/config/reload status ${reloaded.response.status}`);
+      assert(reloaded.payload.applied === true, "Config reload was not applied.");
+      const afterReloadVersion = await getConfigVersion();
+      const expectedVersion = configTemplateVersion();
+      assert(Boolean(expectedVersion), "Config template version is missing.");
+      assert(afterReloadVersion.configVersion === expectedVersion, `Expected ${expectedVersion}, got ${afterReloadVersion.configVersion}`);
+
+      const afterReload = await executeCommand("kompas.dsl.hotReloadCast", dslApplicationArgs);
+      assertKompasSurface(afterReload, "ISymbols2DContainer", "kompas.dsl.hotReloadCast after reload");
+
+      const rebound = await refreshKompasHandlesAfterReload();
+      return {
+        actual: `versions=${afterLoadVersion.configVersion} -> ${afterReloadVersion.configVersion}`,
+        details: `reboundDoc2D=${rebound.doc2dHandle}; reboundApi5=${rebound.api5ApplicationHandle}; reboundApi7=${rebound.api7ApplicationHandle}; ${rebound.refresh}`,
+      };
+    });
+  }
+
+  const kompasWorkingCopyPath = kompas.sampleCopyPath;
+  if (kompas.interopAssemblyPath) {
+    const reopened = await openVisibleKompasDocument(kompas.sampleCopyPath);
+    const rebound = await bindActiveKompasDocument(kompas.sampleCopyPath, "after-dsl-document-reset");
+    appendLog("kompas-dsl-document-reset", `mode=${reopened.mode}; path=${rebound.active.path}; ${rebound.refresh}`);
+  }
 
   const operations = [
     {
@@ -3492,7 +3988,12 @@ async function runKompasSuite(report) {
       expected: "API7 document должен возвращать путь активного документа",
       action: async () => {
         const actual = await readExcelResult("kompas.api7.document.get-path", { handleId: api7DocumentHandle });
-        assert(pathEquals(actual, kompas.sampleCopyPath) || pathEquals(actual, kompas.saveCopyPath) || pathEquals(actual, kompas.api5SaveCopyPath), `Unexpected document path ${actual}`);
+        assert(
+          pathEquals(actual, kompasWorkingCopyPath) ||
+          pathEquals(actual, kompas.sampleCopyPath) ||
+          pathEquals(actual, kompas.saveCopyPath) ||
+          pathEquals(actual, kompas.api5SaveCopyPath),
+          `Unexpected document path ${actual}`);
         return { actual: String(actual) };
       },
     },
@@ -3509,9 +4010,9 @@ async function runKompasSuite(report) {
       id: "kompas-op-54-save-document",
       expected: "ksSaveDocument должен сохранять документ поверх временной копии",
       action: async () => {
-        const actual = await readExcelResult("kompas.api5.save-document", { handleId: doc2dHandle, path: kompas.sampleCopyPath });
+        const actual = await readExcelResult("kompas.api5.save-document", { handleId: doc2dHandle, path: kompasWorkingCopyPath });
         assertExcelBoolean(actual, true, "ksSaveDocument");
-        const info = await executeCommand("system.file.info", { path: kompas.sampleCopyPath });
+        const info = await executeCommand("system.file.info", { path: kompasWorkingCopyPath });
         assert(extractResultField(info, "Exists") === true, "KOMPAS document file does not exist after save.");
         return { actual: `saveDocument=${actual}` };
       },
@@ -3968,9 +4469,13 @@ async function runChaosSuite() {
   let keeperSession = state.chaosKeeperSession;
   if (!keeperSession) {
     keeperSession = new SessionClient("chaos-keeper");
-    await keeperSession.connect();
-    state.chaosKeeperSession = keeperSession;
   }
+  await ensureSessionConnected(keeperSession, "chaos-keeper-start");
+  state.chaosKeeperSession = keeperSession;
+  const keeperRecoveryLoop = startSessionRecoveryLoop(
+    keeperSession,
+    Math.max(3, Math.min(10, Number(state.scenario.durations.reconnectIntervalSeconds || 5))),
+    "chaos-keeper-recovery");
 
   const catalog = state.scenario.catalogs?.chaos ?? {
     workers: 4,
@@ -4057,7 +4562,22 @@ async function runChaosSuite() {
     id: "chaos-health-after-run",
     expected: "После хаотической нагрузки агент должен оставаться доступным по /health",
   }, async () => {
-    const { response, payload } = await getHealth();
+    let healthResult = null;
+    await waitForCondition(async () => {
+      try {
+        const result = await getHealth();
+        if (!result.response.ok) {
+          return false;
+        }
+
+        healthResult = result;
+        return true;
+      } catch {
+        return false;
+      }
+    }, 60000, "Utility did not recover /health after chaos.");
+
+    const { response, payload } = healthResult;
     assert(response.ok, `/health status ${response.status}`);
     return { actual: `status=${payload.status}, runtimeState=${payload.runtimeState}, actions=${actionCount}, workerFailures=${failureCount}` };
   });
@@ -4066,6 +4586,9 @@ async function runChaosSuite() {
     id: "chaos-cli-shutdown",
     expected: "CLI --shutdown должен корректно завершить уже работающий экземпляр",
   }, async () => {
+    keeperRecoveryLoop.stop();
+    await keeperRecoveryLoop.promise;
+    await keeperSession.disconnect("chaos-cli-shutdown");
     const result = await hostControl("cli-shutdown", {});
     assert(result.returncode === 0, `cli-shutdown returned ${result.returncode}`);
     await waitForCondition(async () => {

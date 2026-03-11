@@ -1379,6 +1379,186 @@ internal static class ReflectiveInvokeAccessor
         throw new MissingMethodException($"No constructor of '{targetType.FullName}' matches the provided arguments.");
     }
 
+    internal static bool TryGetClrMemberValue(object target, Type targetType, string member, out object? value)
+    {
+        const BindingFlags Flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.IgnoreCase;
+        PropertyInfo? property = targetType.GetProperty(member, Flags);
+        if (property is not null && property.GetIndexParameters().Length == 0)
+        {
+            MethodInfo? getter = property.GetMethod;
+            if (getter is not null)
+            {
+                value = ResolveDeclaredMethod(target, targetType, getter).Invoke(target, null);
+                return true;
+            }
+        }
+
+        FieldInfo? field = targetType.GetField(member, Flags);
+        if (field is not null)
+        {
+            value = field.GetValue(target);
+            return true;
+        }
+
+        value = null;
+        return false;
+    }
+
+    internal static bool TrySetClrMemberValue(object target, Type targetType, string member, object? value)
+    {
+        const BindingFlags Flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.IgnoreCase;
+        PropertyInfo? property = targetType.GetProperty(member, Flags);
+        if (property is not null && property.CanWrite)
+        {
+            MethodInfo? setter = property.SetMethod;
+            if (setter is not null)
+            {
+                ResolveDeclaredMethod(target, targetType, setter)
+                    .Invoke(target, [CoerceValue(value, property.PropertyType)]);
+                return true;
+            }
+        }
+
+        FieldInfo? field = targetType.GetField(member, Flags);
+        if (field is not null)
+        {
+            field.SetValue(target, CoerceValue(value, field.FieldType));
+            return true;
+        }
+
+        return false;
+    }
+
+    internal static bool TryInvokeClrMethod(
+        object target,
+        Type targetType,
+        string member,
+        ResolvedInvokeArgument[] arguments,
+        out object? result,
+        out Dictionary<string, object?> captures)
+    {
+        const BindingFlags Flags = BindingFlags.Instance | BindingFlags.Public;
+        MethodInfo[] methods = targetType
+            .GetMethods(Flags)
+            .Where(method => string.Equals(method.Name, member, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+
+        foreach (MethodInfo method in methods)
+        {
+            ParameterInfo[] parameters = method.GetParameters();
+            if (!TryBindClrArguments(arguments, parameters, out object?[] coercedArguments, out List<(ResolvedInvokeArgument Argument, int ParameterIndex)> bindings))
+            {
+                continue;
+            }
+
+            result = ResolveDeclaredMethod(target, targetType, method).Invoke(target, coercedArguments);
+            captures = CreateCaptureMap(bindings, coercedArguments);
+            return true;
+        }
+
+        result = null;
+        captures = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+        return false;
+    }
+
+    internal static bool TryGetClrIndexerValue(
+        object target,
+        Type targetType,
+        ResolvedInvokeArgument[] arguments,
+        out object? value,
+        out Dictionary<string, object?> captures)
+    {
+        const BindingFlags Flags = BindingFlags.Instance | BindingFlags.Public;
+        foreach (PropertyInfo property in targetType.GetProperties(Flags))
+        {
+            if (property.GetIndexParameters().Length == 0)
+            {
+                continue;
+            }
+
+            ParameterInfo[] parameters = property.GetIndexParameters();
+            if (!TryBindClrArguments(arguments, parameters, out object?[] coercedArguments, out List<(ResolvedInvokeArgument Argument, int ParameterIndex)> bindings))
+            {
+                continue;
+            }
+
+            MethodInfo? getter = property.GetMethod;
+            if (getter is null)
+            {
+                continue;
+            }
+
+            value = ResolveDeclaredMethod(target, targetType, getter).Invoke(target, coercedArguments);
+            captures = CreateCaptureMap(bindings, coercedArguments);
+            return true;
+        }
+
+        value = null;
+        captures = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+        return false;
+    }
+
+    private static MethodInfo ResolveDeclaredMethod(object target, Type targetType, MethodInfo method)
+    {
+        if (!targetType.IsInterface)
+        {
+            return method;
+        }
+
+        InterfaceMapping map;
+        try
+        {
+            map = target.GetType().GetInterfaceMap(targetType);
+        }
+        catch (ArgumentException)
+        {
+            // Some COM RCWs produced from Marshal.GetTypedObjectForIUnknown expose interface members
+            // but do not report a stable interface map for reflection.
+            return method;
+        }
+
+        for (int index = 0; index < map.InterfaceMethods.Length; index++)
+        {
+            if (map.InterfaceMethods[index] == method)
+            {
+                return map.TargetMethods[index];
+            }
+        }
+
+        ParameterInfo[] methodParameters = method.GetParameters();
+        for (int index = 0; index < map.InterfaceMethods.Length; index++)
+        {
+            MethodInfo candidate = map.InterfaceMethods[index];
+            if (!string.Equals(candidate.Name, method.Name, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            ParameterInfo[] candidateParameters = candidate.GetParameters();
+            if (candidateParameters.Length != methodParameters.Length)
+            {
+                continue;
+            }
+
+            bool sameSignature = true;
+            for (int parameterIndex = 0; parameterIndex < candidateParameters.Length; parameterIndex++)
+            {
+                if (candidateParameters[parameterIndex].ParameterType != methodParameters[parameterIndex].ParameterType)
+                {
+                    sameSignature = false;
+                    break;
+                }
+            }
+
+            if (sameSignature)
+            {
+                return map.TargetMethods[index];
+            }
+        }
+
+        return method;
+    }
+
     private static bool IsComObject(object target)
     {
         return Marshal.IsComObject(target) || target.GetType().IsCOMObject;
@@ -1679,43 +1859,12 @@ internal static class ReflectiveInvokeAccessor
 
     private static bool TryGetClrMemberValue(object target, string member, out object? value)
     {
-        const BindingFlags Flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.IgnoreCase;
-        PropertyInfo? property = target.GetType().GetProperty(member, Flags);
-        if (property is not null && property.GetIndexParameters().Length == 0)
-        {
-            value = property.GetValue(target);
-            return true;
-        }
-
-        FieldInfo? field = target.GetType().GetField(member, Flags);
-        if (field is not null)
-        {
-            value = field.GetValue(target);
-            return true;
-        }
-
-        value = null;
-        return false;
+        return TryGetClrMemberValue(target, target.GetType(), member, out value);
     }
 
     private static bool TrySetClrMemberValue(object target, string member, object? value)
     {
-        const BindingFlags Flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.IgnoreCase;
-        PropertyInfo? property = target.GetType().GetProperty(member, Flags);
-        if (property is not null && property.CanWrite)
-        {
-            property.SetValue(target, CoerceValue(value, property.PropertyType));
-            return true;
-        }
-
-        FieldInfo? field = target.GetType().GetField(member, Flags);
-        if (field is not null)
-        {
-            field.SetValue(target, CoerceValue(value, field.FieldType));
-            return true;
-        }
-
-        return false;
+        return TrySetClrMemberValue(target, target.GetType(), member, value);
     }
 
     private static bool TryInvokeClrMethod(
@@ -1725,28 +1874,7 @@ internal static class ReflectiveInvokeAccessor
         out object? result,
         out Dictionary<string, object?> captures)
     {
-        const BindingFlags Flags = BindingFlags.Instance | BindingFlags.Public;
-        MethodInfo[] methods = target.GetType()
-            .GetMethods(Flags)
-            .Where(method => string.Equals(method.Name, member, StringComparison.OrdinalIgnoreCase))
-            .ToArray();
-
-        foreach (MethodInfo method in methods)
-        {
-            ParameterInfo[] parameters = method.GetParameters();
-            if (!TryBindClrArguments(arguments, parameters, out object?[] coercedArguments, out List<(ResolvedInvokeArgument Argument, int ParameterIndex)> bindings))
-            {
-                continue;
-            }
-
-            result = method.Invoke(target, coercedArguments);
-            captures = CreateCaptureMap(bindings, coercedArguments);
-            return true;
-        }
-
-        result = null;
-        captures = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
-        return false;
+        return TryInvokeClrMethod(target, target.GetType(), member, arguments, out result, out captures);
     }
 
     private static bool TryGetClrIndexerValue(
@@ -1755,28 +1883,7 @@ internal static class ReflectiveInvokeAccessor
         out object? value,
         out Dictionary<string, object?> captures)
     {
-        const BindingFlags Flags = BindingFlags.Instance | BindingFlags.Public;
-        foreach (PropertyInfo property in target.GetType().GetProperties(Flags))
-        {
-            if (property.GetIndexParameters().Length == 0)
-            {
-                continue;
-            }
-
-            ParameterInfo[] parameters = property.GetIndexParameters();
-            if (!TryBindClrArguments(arguments, parameters, out object?[] coercedArguments, out List<(ResolvedInvokeArgument Argument, int ParameterIndex)> bindings))
-            {
-                continue;
-            }
-
-            value = property.GetValue(target, coercedArguments);
-            captures = CreateCaptureMap(bindings, coercedArguments);
-            return true;
-        }
-
-        value = null;
-        captures = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
-        return false;
+        return TryGetClrIndexerValue(target, target.GetType(), arguments, out value, out captures);
     }
 
     private static bool TryBindClrArguments(

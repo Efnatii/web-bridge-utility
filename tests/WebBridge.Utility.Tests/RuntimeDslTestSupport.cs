@@ -344,10 +344,27 @@ internal sealed class TestRuntimeValue : IReflectiveInvocationProxy, IReflective
         try
         {
             object?[] indexArguments = arguments.Select(argument => argument.Value).ToArray();
-            PropertyInfo indexer = _value.GetType()
+            string actualMember = string.IsNullOrWhiteSpace(member) ? "Item" : member;
+            PropertyInfo? indexer = _value.GetType()
                 .GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                .Single(property => property.Name == "Item" && property.GetIndexParameters().Length == indexArguments.Length);
-            object? indexedValue = indexer.GetValue(_value, indexArguments);
+                .FirstOrDefault(property =>
+                    string.Equals(property.Name, actualMember, StringComparison.Ordinal) &&
+                    property.GetIndexParameters().Length == indexArguments.Length);
+            object? indexedValue;
+            if (indexer is not null)
+            {
+                indexedValue = indexer.GetValue(_value, indexArguments);
+            }
+            else
+            {
+                MethodInfo getter = _value.GetType()
+                    .GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                    .Single(method =>
+                        string.Equals(method.Name, $"get_{actualMember}", StringComparison.Ordinal) &&
+                        method.GetParameters().Length == indexArguments.Length);
+                indexedValue = getter.Invoke(_value, indexArguments);
+            }
+
             return new InvokeCallOutcome(
                 _runtime.AdaptValue(indexedValue),
                 new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase));
@@ -670,6 +687,8 @@ internal interface IFakeDrawingTables
 {
     IFakeDrawingTable Add(int rows, int cols);
 
+    IFakeDrawingTable Add(int rows, int cols, double rowHeight, double colWidth, int titlePos);
+
     IFakeDrawingTable Load(string path);
 }
 
@@ -680,6 +699,8 @@ internal interface IFakeDrawingTable
 internal interface IFakeTable
 {
     IFakeTableCell this[int row, int col] { get; }
+
+    IFakeTableCell get_Cell(int row, int col);
 }
 
 internal interface IFakeTableCell
@@ -744,6 +765,9 @@ internal sealed class FakeDrawingTables : IFakeDrawingTables
         LastCreatedTable = new FakeDrawingTable(rows, cols);
         return LastCreatedTable;
     }
+
+    public IFakeDrawingTable Add(int rows, int cols, double rowHeight, double colWidth, int titlePos)
+        => Add(rows, cols);
 }
 
 internal sealed class FakeDrawingTable : IFakeDrawingTable, IFakeTable
@@ -773,6 +797,8 @@ internal sealed class FakeDrawingTable : IFakeDrawingTable, IFakeTable
             return cell;
         }
     }
+
+    public IFakeTableCell get_Cell(int row, int col) => this[row, col];
 }
 
 internal sealed class FakeTableCell : IFakeTableCell

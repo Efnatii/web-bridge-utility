@@ -179,6 +179,65 @@ public sealed class RuntimeDslReloadTests
         Assert.Contains("table.tbl", drawingTables.LoadedPaths);
     }
 
+    [Fact]
+    public async Task Kompas_Table_Scenario_Works_With_KompasLike_Table_Signatures()
+    {
+        FakeView view = new("Main");
+        FakeViews views = new(view);
+        FakeViewsAndLayersManager manager = new(views);
+        FakeDocument2D document = new(manager);
+        FakeApplicationRoot application = new(document);
+
+        ProfileDefinition profile = TestDsl.Profile(
+            "runtime",
+            TestDsl.Command(
+                "kompas.table.write-cell.kompas-shape",
+                "kompas",
+                "application",
+                TestDsl.Step("get", "ActiveDocument"),
+                TestDsl.Step("get", "ViewsAndLayersManager"),
+                TestDsl.Step("get", "Views"),
+                TestDsl.Step("get", "ActiveView"),
+                TestDsl.Step("cast", "IFakeSymbols2DContainer"),
+                TestDsl.Step("get", "DrawingTables"),
+                TestDsl.Step(
+                    "call",
+                    "Add",
+                    TestDsl.Arg("rows", "int"),
+                    TestDsl.Arg("cols", "int"),
+                    TestDsl.Arg("rowHeight", "double"),
+                    TestDsl.Arg("colWidth", "double"),
+                    TestDsl.Arg("titlePos", "int")),
+                TestDsl.Step("cast", "IFakeTable"),
+                TestDsl.Step("index", "Cell", TestDsl.Arg("row", "int"), TestDsl.Arg("col", "int")),
+                TestDsl.Step("get", "Text"),
+                TestDsl.Step("cast", "IFakeText"),
+                TestDsl.SetStep("Str", "value"),
+                TestDsl.Step("get", "Str")));
+        UtilitySettings settings = TestDsl.Settings(profile, CreateKompasAdapter());
+        TestDispatcherHarness harness = TestDsl.CreateDispatcherHarness(settings, _ => application);
+
+        CommandExecutionResult write = await harness.Dispatcher.ExecuteAsync(
+            new ExecuteCommandRequest(
+                "runtime",
+                "kompas.table.write-cell.kompas-shape",
+                new JsonObject
+                {
+                    ["rows"] = 2,
+                    ["cols"] = 2,
+                    ["rowHeight"] = 10.0,
+                    ["colWidth"] = 40.0,
+                    ["titlePos"] = 2,
+                    ["row"] = 1,
+                    ["col"] = 1,
+                    ["value"] = "hello",
+                }),
+            CancellationToken.None);
+
+        Assert.True(write.Success, write.Error?.Message);
+        Assert.Equal("hello", write.Result?.GetValue<string>());
+    }
+
     private static ComInvokeDescriptor CreateAdapter(string displayName, int surfacesCount)
     {
         return new ComInvokeDescriptor
@@ -236,4 +295,5 @@ public sealed class RuntimeDslReloadTests
     {
         public string Title { get; } = title;
     }
+
 }

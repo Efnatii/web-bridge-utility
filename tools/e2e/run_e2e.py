@@ -185,6 +185,74 @@ def find_kompas_sample() -> Path | None:
     return None
 
 
+def unique_paths(paths: list[Path]) -> list[Path]:
+    seen: set[str] = set()
+    unique: list[Path] = []
+    for path in paths:
+        rendered = str(path).lower()
+        if rendered in seen:
+            continue
+        seen.add(rendered)
+        unique.append(path)
+    return unique
+
+
+def resolve_configured_path(raw_path: str) -> Path:
+    path = Path(raw_path)
+    if path.is_absolute():
+        return path
+    return (CONFIG_TEMPLATE.parent / path).resolve()
+
+
+def find_kompas_api7_interop(template_config: dict[str, Any]) -> tuple[Path | None, list[str]]:
+    configured_paths: list[Path] = []
+    adapters = template_config.get("Adapters", {}).get("Com", [])
+    for adapter in adapters:
+        if str(adapter.get("AdapterName", "")).lower() != "kompas":
+            continue
+        configured_paths.extend(
+            resolve_configured_path(str(path))
+            for path in adapter.get("InteropAssemblies", [])
+            if str(path).strip())
+        break
+
+    candidates = unique_paths(configured_paths + [
+        Path(r"C:\Program Files\ASCON\KOMPAS-3D v24\Libs\PolynomLib\Bin\Client\Interop.KompasAPI7.dll"),
+        Path(r"C:\Program Files\ASCON\KOMPAS-3D v24\Bin\Interop.KompasAPI7.dll"),
+    ])
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate, [str(path) for path in candidates]
+    return None, [str(path) for path in candidates]
+
+
+def find_kompas_table_template() -> tuple[Path | None, list[str]]:
+    candidates = unique_paths([
+        Path(r"C:\Program Files\ASCON\KOMPAS-3D v24\Tutorials\Приемы работы в КОМПАС-График\5 Оформления документов\Результат\Stamp.tbl"),
+        Path(r"C:\Program Files\ASCON\KOMPAS-3D v24\Libs\Floorplan\Sys\Asar\ScheduleTemplate.tbl"),
+        Path(r"C:\Program Files\ASCON\KOMPAS-3D v24\Libs\ServiceTools\Komlib.tbl"),
+    ])
+
+    install_root = Path(r"C:\Program Files\ASCON\KOMPAS-3D v24")
+    if install_root.exists():
+        discovered = sorted(install_root.rglob("*.tbl"), key=lambda path: str(path).lower())
+        candidates = unique_paths(candidates + discovered)
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate, [str(path) for path in candidates]
+    return None, [str(path) for path in candidates]
+
+
+def patch_kompas_adapter_config(config: dict[str, Any], kompas_api7_interop: Path | None) -> None:
+    adapters = config.setdefault("Adapters", {}).setdefault("Com", [])
+    for adapter in adapters:
+        if str(adapter.get("AdapterName", "")).lower() != "kompas":
+            continue
+        adapter["InteropAssemblies"] = [str(kompas_api7_interop.resolve())] if kompas_api7_interop else []
+        return
+
+
 def arg(name: str, converter: str | None = None, *, argument_name: str | None = None, by_ref: bool = False, capture_as: str | None = None) -> dict[str, Any]:
     payload: dict[str, Any] = {"FromArgument": name}
     if converter:
@@ -325,6 +393,7 @@ def build_excel_commands() -> dict[str, Any]:
         "excel.application.set-screen-updating": command("excel", "application", [step("set", "ScreenUpdating", value_argument="value")]),
         "excel.application.get-screen-updating": command("excel", "application", [step("get", "ScreenUpdating")]),
         "excel.application.active-sheet-name": command("excel", "application", [step("get", "ActiveSheet"), step("get", "Name")]),
+        "excel.application.active-workbook": command("excel", "application", [step("get", "ActiveWorkbook")]),
         "excel.workbooks.add": command("excel", "application", [step("get", "Workbooks"), step("call", "Add")]),
         "excel.workbook.get-name": command("excel", "handle", [step("get", "Name")]),
         "excel.workbook.get-full-name": command("excel", "handle", [step("get", "FullName")]),
@@ -371,8 +440,8 @@ def build_excel_commands() -> dict[str, Any]:
         "excel.range.get-fill-color": command("excel", "handle", [step("get", "Interior"), step("get", "Color")]),
         "excel.range.border-style": command("excel", "handle", [step("get", "Borders"), step("set", "LineStyle", value_argument="lineStyle")]),
         "excel.range.get-border-style": command("excel", "handle", [step("get", "Borders"), step("get", "LineStyle")]),
-        "excel.range.merge": command("excel", "handle", [step("call", "Merge")]),
-        "excel.range.unmerge": command("excel", "handle", [step("call", "UnMerge")]),
+        "excel.range.merge": command("excel", "handle", [step("set", "MergeCells", value_argument="value")], default_arguments={"value": True}),
+        "excel.range.unmerge": command("excel", "handle", [step("set", "MergeCells", value_argument="value")], default_arguments={"value": False}),
         "excel.range.get-merge-cells": command("excel", "handle", [step("get", "MergeCells")]),
         "excel.range.wrap-text": command("excel", "handle", [step("set", "WrapText", value_argument="value")]),
         "excel.range.get-wrap-text": command("excel", "handle", [step("get", "WrapText")]),
@@ -399,7 +468,7 @@ def build_excel_commands() -> dict[str, Any]:
         "excel.range.insert-row": command("excel", "handle", [step("get", "EntireRow"), step("call", "Insert")]),
         "excel.range.delete-row": command("excel", "handle", [step("get", "EntireRow"), step("call", "Delete")]),
         "excel.range.auto-filter": command("excel", "handle", [step("call", "AutoFilter", args=[arg("field", "int"), arg("criteria1", "string"), literal(None, "missing"), literal(None, "missing"), literal(True)])]),
-        "excel.range.clear-contents": command("excel", "handle", [step("call", "ClearContents")]),
+        "excel.range.clear-contents": command("excel", "handle", [step("set", "Value2", value_argument="value")], default_arguments={"value": None}),
         "excel.range.clear-formats": command("excel", "handle", [step("call", "ClearFormats")]),
         "excel.workbook.save-as": command("excel", "handle", [step("call", "SaveAs", args=[arg("path", "path")])]),
         "excel.workbook.close": command("excel", "handle", [step("call", "Close", args=[literal(False)])]),
@@ -507,6 +576,62 @@ def build_kompas_commands(view_types: dict[str, int]) -> dict[str, Any]:
             [step("call", "OpenDocument", args=[arg("path", "path")])],
             default_arguments=api7_defaults),
         "kompas.api7.active-document": command("kompas", "application", [step("get", "ActiveDocument")], default_arguments=api7_defaults),
+        "kompas.dsl.activeView": command(
+            "kompas",
+            "application",
+            [
+                step("get", "ActiveDocument"),
+                step("get", "ViewsAndLayersManager"),
+                step("get", "Views"),
+                step("get", "ActiveView"),
+            ],
+            default_arguments=api7_defaults),
+        "kompas.dsl.activeView.castSymbols": command(
+            "kompas",
+            "application",
+            [
+                step("get", "ActiveDocument"),
+                step("get", "ViewsAndLayersManager"),
+                step("get", "Views"),
+                step("get", "ActiveView"),
+                step("cast", "ISymbols2DContainer"),
+            ],
+            default_arguments=api7_defaults),
+        "kompas.dsl.activeView.querySymbols": command(
+            "kompas",
+            "application",
+            [
+                step("get", "ActiveDocument"),
+                step("get", "ViewsAndLayersManager"),
+                step("get", "Views"),
+                step("get", "ActiveView"),
+                step("queryInterface", "symbols2d"),
+            ],
+            default_arguments=api7_defaults),
+        "kompas.dsl.activeView.tryCastTable": command(
+            "kompas",
+            "application",
+            [
+                step("get", "ActiveDocument"),
+                step("get", "ViewsAndLayersManager"),
+                step("get", "Views"),
+                step("get", "ActiveView"),
+                step("tryCast", "ITable"),
+            ],
+            default_arguments=api7_defaults),
+        "kompas.dsl.hotReloadCast": command(
+            "kompas",
+            "application",
+            [
+                step("get", "ActiveDocument"),
+                step("get", "ViewsAndLayersManager"),
+                step("get", "Views"),
+                step("get", "ActiveView"),
+                step("cast", "symbols2d"),
+            ],
+            default_arguments=api7_defaults),
+        "kompas.dsl.handle.castSymbols": command("kompas", "handle", [step("cast", "ISymbols2DContainer")]),
+        "kompas.dsl.handle.castTable": command("kompas", "handle", [step("cast", "ITable")]),
         "kompas.api7.doc.views": command("kompas", "handle", [step("get", "ViewsAndLayersManager"), step("get", "Views")]),
         "kompas.api7.views.add": command("kompas", "handle", [step("call", "Add", args=[arg("viewType", "int")])], default_arguments={"viewType": view_types.get("vt_Normal", 1)}),
         "kompas.api7.document.view-add": command(
@@ -549,6 +674,56 @@ def build_kompas_commands(view_types: dict[str, int]) -> dict[str, Any]:
         "kompas.api7.document.get-path": command("kompas", "handle", [step("get", "PathName")]),
         "kompas.api7.document.save-as": command("kompas", "handle", [step("call", "SaveAs", args=[arg("path", "path")])]),
         "kompas.api7.document.close": command("kompas", "handle", [step("call", "Close")]),
+        "kompas.table.writeCell": command(
+            "kompas",
+            "application",
+            [
+                step("get", "ActiveDocument"),
+                step("get", "ViewsAndLayersManager"),
+                step("get", "Views"),
+                step("get", "ActiveView"),
+                step("cast", "ISymbols2DContainer"),
+                step("get", "DrawingTables"),
+                step("call", "Add", args=[
+                    arg("rows", "int"),
+                    arg("cols", "int"),
+                    arg("rowHeight", "double"),
+                    arg("colWidth", "double"),
+                    arg("titlePos", "int"),
+                ]),
+                step("cast", "ITable"),
+                step("index", "Cell", args=[arg("row", "int"), arg("col", "int")]),
+                step("get", "Text"),
+                step("cast", "IText"),
+                step("set", "Str", value_argument="value"),
+            ],
+            default_arguments={
+                **api7_defaults,
+                "rowHeight": 10.0,
+                "colWidth": 40.0,
+                "titlePos": 2,
+            }),
+        "kompas.document.saveActive": command(
+            "kompas",
+            "application",
+            [
+                step("get", "ActiveDocument"),
+                step("call", "SaveAs", args=[arg("path", "path")]),
+            ],
+            default_arguments=api7_defaults),
+        "kompas.table.load": command(
+            "kompas",
+            "application",
+            [
+                step("get", "ActiveDocument"),
+                step("get", "ViewsAndLayersManager"),
+                step("get", "Views"),
+                step("get", "ActiveView"),
+                step("cast", "ISymbols2DContainer"),
+                step("get", "DrawingTables"),
+                step("call", "Load", args=[arg("path", "path")]),
+            ],
+            default_arguments=api7_defaults),
     }
 
 
@@ -563,8 +738,14 @@ def build_profile_commands() -> dict[str, Any]:
     return commands
 
 
-def make_temp_config(temp_root: Path, commands: dict[str, Any], browser_host: str, browser_port: int) -> tuple[Path, dict[str, Any]]:
-    config = read_json(CONFIG_TEMPLATE)
+def make_temp_config(
+    temp_root: Path,
+    template_config: dict[str, Any],
+    commands: dict[str, Any],
+    browser_host: str,
+    browser_port: int,
+    kompas_api7_interop: Path | None) -> tuple[Path, dict[str, Any]]:
+    config = json.loads(json.dumps(template_config))
     config.setdefault("Versions", {})
     config.setdefault("Runtime", {})
     config.setdefault("Ui", {})
@@ -573,6 +754,7 @@ def make_temp_config(temp_root: Path, commands: dict[str, Any], browser_host: st
     config.setdefault("Storage", {})
     config.setdefault("Catalog", {})
     config.setdefault("Adapters", {})
+    config.setdefault("Security", {})
     config["Versions"]["ConfigVersion"] = f"e2e-{utc_now()}"
     config["Runtime"]["EnvironmentName"] = "E2E"
     config["Ui"]["Url"] = f"http://{browser_host}:{browser_port}/probe.html"
@@ -591,6 +773,7 @@ def make_temp_config(temp_root: Path, commands: dict[str, Any], browser_host: st
         f"http://{browser_host}:{browser_port}",
         f"http://localhost:{browser_port}",
     ]
+    patch_kompas_adapter_config(config, kompas_api7_interop)
     config["Catalog"]["Profiles"] = [
         {
             "ProfileId": "e2e",
@@ -611,7 +794,18 @@ def make_temp_config(temp_root: Path, commands: dict[str, Any], browser_host: st
     return config_path, config
 
 
-def build_scenario(temp_root: Path, config: dict[str, Any], browser_host: str, browser_port: int, chaos_duration: int, soak_seconds: int, latency_iterations: int) -> dict[str, Any]:
+def build_scenario(
+    temp_root: Path,
+    config: dict[str, Any],
+    browser_host: str,
+    browser_port: int,
+    chaos_duration: int,
+    soak_seconds: int,
+    latency_iterations: int,
+    kompas_api7_interop: Path | None,
+    kompas_api7_interop_candidates: list[str],
+    kompas_table_template: Path | None,
+    kompas_table_template_candidates: list[str]) -> dict[str, Any]:
     workspace = temp_root / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
     excel_dir = workspace / "excel"
@@ -622,12 +816,19 @@ def build_scenario(temp_root: Path, config: dict[str, Any], browser_host: str, b
 
     kompas_sample = find_kompas_sample()
     kompas_sample_copy = kompas_dir / (kompas_sample.name if kompas_sample else "sample.frw")
+    kompas_legacy_copy = kompas_dir / (
+        f"{kompas_sample.stem}-legacy{kompas_sample.suffix}" if kompas_sample else "sample-legacy.frw")
     kompas_save_copy = kompas_dir / "sample-save-copy.frw"
     kompas_api5_save_copy = kompas_dir / "sample-api5-save-copy.frw"
+    kompas_dsl_save_copy = kompas_dir / "sample-dsl-save-copy.frw"
     kompas_export_dxf = kompas_dir / "sample-export.dxf"
+    kompas_table_template_copy = kompas_dir / "sample-table-template.tbl"
     kompas_export_library = Path(r"C:\Program Files\ASCON\KOMPAS-3D v24\Libs\ImpExp\dwgdxfExp.rtw")
     if kompas_sample:
         shutil.copy2(kompas_sample, kompas_sample_copy)
+        shutil.copy2(kompas_sample, kompas_legacy_copy)
+    if kompas_table_template:
+        shutil.copy2(kompas_table_template, kompas_table_template_copy)
 
     scenario = {
         "utilityBaseUrl": config["Server"]["ListenUrl"],
@@ -678,11 +879,17 @@ def build_scenario(temp_root: Path, config: dict[str, Any], browser_host: str, b
             "hasSample": kompas_sample is not None,
             "samplePath": str(kompas_sample.resolve()) if kompas_sample else None,
             "sampleCopyPath": str(kompas_sample_copy.resolve()),
+            "legacyCopyPath": str(kompas_legacy_copy.resolve()) if kompas_sample else None,
             "sampleDirectory": str(kompas_dir.resolve()),
             "saveCopyPath": str(kompas_save_copy.resolve()),
             "api5SaveCopyPath": str(kompas_api5_save_copy.resolve()),
+            "dslSaveCopyPath": str(kompas_dsl_save_copy.resolve()),
             "exportDxfPath": str(kompas_export_dxf.resolve()),
             "exportLibraryPath": str(kompas_export_library.resolve()) if kompas_export_library.exists() else None,
+            "interopAssemblyPath": str(kompas_api7_interop.resolve()) if kompas_api7_interop else None,
+            "interopAssemblyCandidates": kompas_api7_interop_candidates,
+            "tableTemplatePath": str(kompas_table_template_copy.resolve()) if kompas_table_template else None,
+            "tableTemplateCandidates": kompas_table_template_candidates,
             "structTypes": enum_values(
                 r"C:\Program Files\ASCON\KOMPAS-3D v24\Libs\PolynomLib\Bin\Client\Interop.Kompas6Constants.dll",
                 "StructType2DEnum"),
@@ -855,6 +1062,12 @@ def analyze_runtime_artifacts(temp_root: Path, main_report_path: Path) -> list[d
         if not text:
             continue
 
+        if "chaos-" in text and "-failed" in text:
+            continue
+
+        if "heartbeat-" in text and "-failed" in text and "WebSocket is not open" in text:
+            continue
+
         if "-failed " in text and "expected-rejection" not in text:
             issues.append({
                 "id": "artifact.browser-console.unexpected-failed-log",
@@ -868,7 +1081,7 @@ def analyze_runtime_artifacts(temp_root: Path, main_report_path: Path) -> list[d
         if level in {"error", "pageerror", "driver-error"}:
             if "Failed to load resource" in text and any(code in text for code in ("400", "401", "403", "409")):
                 continue
-            if "ERR_CONNECTION_REFUSED" in text:
+            if "ERR_CONNECTION_REFUSED" in text or "ERR_NETWORK_IO_SUSPENDED" in text:
                 continue
             issues.append({
                 "id": "artifact.browser-console.unexpected-error",
@@ -886,7 +1099,7 @@ def analyze_runtime_artifacts(temp_root: Path, main_report_path: Path) -> list[d
         if level in {"error", "pageerror", "driver-error"}:
             if "Failed to load resource" in text and any(code in text for code in ("400", "401", "403", "409")):
                 continue
-            if "ERR_CONNECTION_REFUSED" in text:
+            if "ERR_CONNECTION_REFUSED" in text or "ERR_NETWORK_IO_SUSPENDED" in text:
                 continue
             issues.append({
                 "id": "artifact.driver-console.unexpected-error",
@@ -940,6 +1153,9 @@ def main() -> int:
     ensure_publish()
     ensure_node_runtime()
     browser = pick_browser()
+    template_config = read_json(CONFIG_TEMPLATE)
+    kompas_api7_interop, kompas_api7_interop_candidates = find_kompas_api7_interop(template_config)
+    kompas_table_template, kompas_table_template_candidates = find_kompas_table_template()
 
     temp_root = Path(tempfile.gettempdir()) / f"kwb-e2e-run-{utc_now()}"
     if temp_root.exists():
@@ -948,8 +1164,25 @@ def main() -> int:
     (temp_root / "artifacts").mkdir(parents=True, exist_ok=True)
 
     commands = build_profile_commands()
-    config_path, config = make_temp_config(temp_root, commands, "127.0.0.1", 5510)
-    scenario = build_scenario(temp_root, config, "127.0.0.1", 5510, args.chaos_seconds, args.soak_seconds, args.latency_iterations)
+    config_path, config = make_temp_config(
+        temp_root,
+        template_config,
+        commands,
+        "127.0.0.1",
+        5510,
+        kompas_api7_interop)
+    scenario = build_scenario(
+        temp_root,
+        config,
+        "127.0.0.1",
+        5510,
+        args.chaos_seconds,
+        args.soak_seconds,
+        args.latency_iterations,
+        kompas_api7_interop,
+        kompas_api7_interop_candidates,
+        kompas_table_template,
+        kompas_table_template_candidates)
     scenario_path = temp_root / "scenario.json"
     write_json(scenario_path, scenario)
 

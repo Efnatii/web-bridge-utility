@@ -59,6 +59,21 @@ public sealed class UnavailableComInvokeRuntime : IReflectiveInvokeRuntime
         => CommandExecutionResult.Fail(_errorCode, _message);
 }
 
+internal delegate ComApplicationBinding AcquireComApplicationDelegate(
+    IEnumerable<string> progIds,
+    bool attachOnly,
+    bool createIfMissing,
+    Action<object>? initializeExisting,
+    Action<object>? initializeCreated);
+
+[SupportedOSPlatform("windows")]
+internal sealed class ComInvokeRuntimeHooks
+{
+    public AcquireComApplicationDelegate AcquireApplication { get; init; } = ComInvokeRuntime.DefaultAcquireApplication;
+
+    public Action<object?> ReleaseApplication { get; init; } = ComInvokeRuntime.DefaultReleaseApplication;
+}
+
 [SupportedOSPlatform("windows")]
 public sealed class ComInvokeRuntime : ComAutomationRuntimeBase, IReflectiveInvokeRuntime, IHandleArgumentResolver, IReflectiveInvokeCastRuntime, IDisposable
 {
@@ -66,14 +81,21 @@ public sealed class ComInvokeRuntime : ComAutomationRuntimeBase, IReflectiveInvo
     private readonly string _adapterName;
     private readonly ComSurfaceCatalog _catalog;
     private readonly StaOperationDispatcher _dispatcher;
+    private readonly ComInvokeRuntimeHooks _hooks;
     private readonly Dictionary<string, CachedComApplication> _applicationsByProgId = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, ComSharedContext> _contexts = new(StringComparer.OrdinalIgnoreCase);
 
     public ComInvokeRuntime(ComInvokeDescriptor descriptor)
+        : this(descriptor, hooks: null)
+    {
+    }
+
+    internal ComInvokeRuntime(ComInvokeDescriptor descriptor, ComInvokeRuntimeHooks? hooks)
     {
         _descriptor = descriptor;
         _adapterName = descriptor.AdapterName;
         _catalog = new ComSurfaceCatalog(descriptor);
+        _hooks = hooks ?? new ComInvokeRuntimeHooks();
         _dispatcher = new StaOperationDispatcher(
             string.IsNullOrWhiteSpace(descriptor.DispatcherName)
                 ? $"{descriptor.DisplayName} COM"
@@ -247,7 +269,7 @@ public sealed class ComInvokeRuntime : ComAutomationRuntimeBase, IReflectiveInvo
     {
         foreach (object application in _applicationsByProgId.Values.Select(entry => entry.Application).Distinct(ReferenceEqualityComparer.Instance))
         {
-            TryFinalRelease(application);
+            _hooks.ReleaseApplication(application);
         }
         _dispatcher.Dispose();
     }
@@ -370,7 +392,7 @@ public sealed class ComInvokeRuntime : ComAutomationRuntimeBase, IReflectiveInvo
             return cachedApplication;
         }
 
-        ComApplicationBinding binding = AcquireApplication(
+        ComApplicationBinding binding = _hooks.AcquireApplication(
             progIds,
             attachOnly: attachOnly,
             createIfMissing: createIfMissing,
@@ -379,7 +401,7 @@ public sealed class ComInvokeRuntime : ComAutomationRuntimeBase, IReflectiveInvo
         if (_applicationsByProgId.TryGetValue(binding.ProgId, out CachedComApplication? previousApplication) &&
             !ReferenceEquals(previousApplication.Application, binding.Application))
         {
-            TryFinalRelease(previousApplication.Application);
+            _hooks.ReleaseApplication(previousApplication.Application);
         }
 
         CachedComApplication cacheEntry = EnsureCacheEntry(binding.ProgId, binding.Application);
@@ -850,6 +872,21 @@ public sealed class ComInvokeRuntime : ComAutomationRuntimeBase, IReflectiveInvo
             _ => InvokeJsonNodeConverter.Convert(value),
         };
     }
+
+    internal static ComApplicationBinding DefaultAcquireApplication(
+        IEnumerable<string> progIds,
+        bool attachOnly,
+        bool createIfMissing,
+        Action<object>? initializeExisting,
+        Action<object>? initializeCreated)
+        => AcquireApplication(
+            progIds,
+            attachOnly: attachOnly,
+            createIfMissing: createIfMissing,
+            initializeExisting: initializeExisting,
+            initializeCreated: initializeCreated);
+
+    internal static void DefaultReleaseApplication(object? value) => TryFinalRelease(value);
 }
 
 internal sealed class ReferenceEqualityComparer : IEqualityComparer<object>

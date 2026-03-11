@@ -157,14 +157,14 @@ internal sealed class ComSurfaceCatalog
 
     private static bool TryResolveValue(object value, ResolvedComSurface surface, out object? resolvedValue)
     {
-        if (surface.ClrType is not null && surface.ClrType.IsInstanceOfType(value))
+        if (surface.InterfaceId is Guid iid && TryQueryInterface(value, iid, surface.ClrType, out resolvedValue))
         {
-            resolvedValue = value;
             return true;
         }
 
-        if (surface.InterfaceId is Guid iid && TryQueryInterface(value, iid, surface.ClrType, out resolvedValue))
+        if (surface.ClrType is not null && surface.ClrType.IsInstanceOfType(value))
         {
+            resolvedValue = value;
             return true;
         }
 
@@ -190,9 +190,16 @@ internal sealed class ComSurfaceCatalog
                 return false;
             }
 
-            resolvedValue = targetType is null
-                ? Marshal.GetObjectForIUnknown(interfacePointer)
-                : Marshal.GetTypedObjectForIUnknown(interfacePointer, targetType);
+            resolvedValue = Marshal.GetObjectForIUnknown(interfacePointer);
+            if (targetType is not null &&
+                resolvedValue is not null &&
+                !targetType.IsInstanceOfType(resolvedValue) &&
+                !Marshal.IsComObject(resolvedValue) &&
+                !resolvedValue.GetType().IsCOMObject)
+            {
+                resolvedValue = Marshal.GetTypedObjectForIUnknown(interfacePointer, targetType);
+            }
+
             return true;
         }
         catch
@@ -276,7 +283,9 @@ internal sealed class ResolvedComSurface
         Name = definition.Name;
         ClrTypeName = definition.ClrTypeName;
         ClrType = clrType;
-        InterfaceId = Guid.TryParse(definition.Iid, out Guid parsedIid) ? parsedIid : null;
+        InterfaceId = Guid.TryParse(definition.Iid, out Guid parsedIid)
+            ? parsedIid
+            : ResolveInterfaceId(clrType);
         LookupKeys = BuildLookupKeys(definition, clrType, InterfaceId);
         MemberNames = BuildMemberNames(clrType);
         _memberNames = MemberNames.ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -376,6 +385,17 @@ internal sealed class ResolvedComSurface
             .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
             .ToArray();
     }
+
+    private static Guid? ResolveInterfaceId(Type? clrType)
+    {
+        if (clrType is null)
+        {
+            return null;
+        }
+
+        Guid guid = clrType.GUID;
+        return guid == Guid.Empty ? null : guid;
+    }
 }
 
 internal sealed record ResolvedComCastTarget(string DisplayName, ResolvedComSurface? Surface, Guid? InterfaceId);
@@ -410,6 +430,14 @@ internal sealed class ComRuntimeValue : IReflectiveInvocationProxy, IReflectiveI
         EnsureMemberAccessible(member, "get");
         try
         {
+            if (TryGetSurfaceClrDispatchTarget(out object? surfaceTarget, out Type? surfaceClrType) &&
+                surfaceTarget is not null &&
+                surfaceClrType is not null &&
+                ReflectiveInvokeAccessor.TryGetClrMemberValue(surfaceTarget, surfaceClrType, member, out object? surfacedValue))
+            {
+                return _runtime.AdaptValue(surfacedValue);
+            }
+
             return _runtime.AdaptValue(ReflectiveInvokeAccessor.GetMemberValue(_value, member));
         }
         catch (Exception exception)
@@ -423,6 +451,14 @@ internal sealed class ComRuntimeValue : IReflectiveInvocationProxy, IReflectiveI
         EnsureMemberAccessible(member, "set");
         try
         {
+            if (TryGetSurfaceClrDispatchTarget(out object? surfaceTarget, out Type? surfaceClrType) &&
+                surfaceTarget is not null &&
+                surfaceClrType is not null &&
+                ReflectiveInvokeAccessor.TrySetClrMemberValue(surfaceTarget, surfaceClrType, member, value))
+            {
+                return;
+            }
+
             ReflectiveInvokeAccessor.SetMemberValue(_value, member, value);
         }
         catch (Exception exception)
@@ -436,6 +472,14 @@ internal sealed class ComRuntimeValue : IReflectiveInvocationProxy, IReflectiveI
         EnsureMemberAccessible(member, "call");
         try
         {
+            if (TryGetSurfaceClrDispatchTarget(out object? surfaceTarget, out Type? surfaceClrType) &&
+                surfaceTarget is not null &&
+                surfaceClrType is not null &&
+                ReflectiveInvokeAccessor.TryInvokeClrMethod(surfaceTarget, surfaceClrType, member, arguments, out object? surfacedValue, out Dictionary<string, object?> surfacedCaptures))
+            {
+                return new InvokeCallOutcome(_runtime.AdaptValue(surfacedValue), surfacedCaptures);
+            }
+
             InvokeCallOutcome outcome = ReflectiveInvokeAccessor.CallMember(_value, member, arguments);
             return new InvokeCallOutcome(_runtime.AdaptValue(outcome.Value), outcome.CapturedArguments);
         }
@@ -449,6 +493,14 @@ internal sealed class ComRuntimeValue : IReflectiveInvocationProxy, IReflectiveI
     {
         try
         {
+            if (TryGetSurfaceClrDispatchTarget(out object? surfaceTarget, out Type? surfaceClrType) &&
+                surfaceTarget is not null &&
+                surfaceClrType is not null &&
+                ReflectiveInvokeAccessor.TryGetClrIndexerValue(surfaceTarget, surfaceClrType, arguments, out object? surfacedValue, out Dictionary<string, object?> surfacedCaptures))
+            {
+                return new InvokeCallOutcome(_runtime.AdaptValue(surfacedValue), surfacedCaptures);
+            }
+
             InvokeCallOutcome outcome = ReflectiveInvokeAccessor.IndexValue(_value, member, arguments);
             return new InvokeCallOutcome(_runtime.AdaptValue(outcome.Value), outcome.CapturedArguments);
         }
@@ -460,6 +512,90 @@ internal sealed class ComRuntimeValue : IReflectiveInvocationProxy, IReflectiveI
 
     public InvokeCallOutcome CreateInstance(ResolvedInvokeArgument[] arguments)
         => throw new InvalidOperationException("COM object handles do not support invoke.new.");
+
+    private bool TryGetSurfaceClrDispatchTarget(out object? surfaceTarget, out Type? surfaceClrType)
+    {
+        ResolvedComSurface? surface = _runtime.ResolveSurface(CurrentSurface, _value);
+        if (surface?.ClrType is null)
+        {
+            surfaceTarget = null;
+            surfaceClrType = null;
+            return false;
+        }
+
+        if (!Marshal.IsComObject(_value) && !_value.GetType().IsCOMObject)
+        {
+            if (!surface.ClrType.IsInstanceOfType(_value))
+            {
+                surfaceTarget = null;
+                surfaceClrType = null;
+                return false;
+            }
+
+            surfaceTarget = _value;
+            surfaceClrType = surface.ClrType;
+            return true;
+        }
+
+        ResolvedComSurface? naturalSurface = _runtime.ResolveSurface(null, _value);
+        if (naturalSurface is not null &&
+            string.Equals(naturalSurface.Name, surface.Name, StringComparison.OrdinalIgnoreCase))
+        {
+            surfaceTarget = null;
+            surfaceClrType = null;
+            return false;
+        }
+
+        if (surface.InterfaceId is not Guid iid)
+        {
+            surfaceTarget = null;
+            surfaceClrType = null;
+            return false;
+        }
+
+        IntPtr unknown = IntPtr.Zero;
+        IntPtr interfacePointer = IntPtr.Zero;
+        try
+        {
+            unknown = Marshal.GetIUnknownForObject(_value);
+            if (Marshal.QueryInterface(unknown, ref iid, out interfacePointer) < 0 || interfacePointer == IntPtr.Zero)
+            {
+                surfaceTarget = null;
+                surfaceClrType = null;
+                return false;
+            }
+
+            object typedValue = Marshal.GetTypedObjectForIUnknown(interfacePointer, surface.ClrType);
+            if (!surface.ClrType.IsInstanceOfType(typedValue))
+            {
+                surfaceTarget = null;
+                surfaceClrType = null;
+                return false;
+            }
+
+            surfaceTarget = typedValue;
+            surfaceClrType = surface.ClrType;
+            return true;
+        }
+        catch
+        {
+            surfaceTarget = null;
+            surfaceClrType = null;
+            return false;
+        }
+        finally
+        {
+            if (interfacePointer != IntPtr.Zero)
+            {
+                _ = Marshal.Release(interfacePointer);
+            }
+
+            if (unknown != IntPtr.Zero)
+            {
+                _ = Marshal.Release(unknown);
+            }
+        }
+    }
 
     private bool TryGetIntrospectionMember(string member, out object? value)
     {
